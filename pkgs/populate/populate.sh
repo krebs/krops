@@ -132,10 +132,14 @@ populate_file() {(
     file_target=$target_user@$target_host:$target_path/$file_name
   fi
 
+  if test -d "$file_path"; then
+    file_path=$file_path/
+  fi
+
   rsync \
       -vFrlptD \
       --delete-excluded \
-      "$file_path"/ \
+      "$file_path" \
       -e "ssh -o ControlPersist=no -p $target_port" \
       "$file_target"
 )}
