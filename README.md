@@ -1,6 +1,6 @@
-# kops (krebs ops)
+# krops (krebs ops)
 
-kops is a lightweigt toolkit to deploy nixos systems, remotely or locally.
+krops is a lightweigt toolkit to deploy nixos systems, remotely or locally.
 
 fancy features include:
 - store your secrets in passwordstore
@@ -10,47 +10,40 @@ fancy features include:
 
 minimal example:
 
-create a kops.nix somewhere
+create a krops.nix somewhere
 ```
 let
-  kops = (import <nixpkgs> {}).fetchgit {
-    url = https://cgit.krebsco.de/kops/;
+  #krops = ./.;
+  krops = (import <nixpkgs> {}).fetchgit {
+    url = https://cgit.krebsco.de/krops/;
     rev = "3022582ade8049e6ccf18f358cedb996d6716945";
-    sha256 = "0wg8d80sxa46z4i7ir79sci2hwmv3qskzqdgksi64p6vazy8vckb";
+    sha256 = "0k3zhv2830z4bljcdvf6ciwjihk2zzcn9y23p49c6sba5hbsd6jb";
   };
 
-  lib = import "${kops}/lib";
-  pkgs = import "${kops}/pkgs" {};
+  lib = import "${krops}/lib";
+  pkgs = import "${krops}/pkgs" {};
 
   source = lib.evalSource [{
     nixpkgs.git = {
       ref = "4b4bbce199d3b3a8001ee93495604289b01aaad3";
       url = https://github.com/NixOS/nixpkgs;
-    };
-    nixos-config.file = pkgs.writeText "nixos-config" ''
-      { config, pkgs, ... }:
-      {
-        imports =
-          [ # Include the results of the hardware scan.
-            ./hardware-configuration.nix
-          ];
 
-        # Use the GRUB 2 boot loader.
-        boot.loader.grub.enable = true;
-        boot.loader.grub.version = 2;
-        # boot.loader.grub.efiSupport = true;
-        # boot.loader.grub.efiInstallAsRemovable = true;
-        # boot.loader.efi.efiSysMountPoint = "/boot/efi";
-        # Define on which hard drive you want to install Grub.
-        boot.loader.grub.device = "/dev/sda"; # or "nodev" for efi only
+    };
+    nixos-config.file = toString (pkgs.writeText "nixos-config" ''
+      { pkgs, ... }: {
+
+        fileSystems."/" = { device = "/dev/sda1"; };
+        boot.loader.systemd-boot.enable = true;
+        services.openssh.enable = true;
+        environment.systemPackages = [ pkgs.git ];
       }
-    '';
+    '');
   }];
 in
-  pkgs.kops.writeDeploy "deploy" {
+  pkgs.krops.writeDeploy "deploy" {
     source = source;
-    target = "localhost";
+    target = "root@192.168.56.101";
   }
 ```
 
-and run `nix-build kops.nix`
+and run `$(nix-build krops.nix)`. This results in a script which deploys the machine via ssh & rsync on the target machine.
