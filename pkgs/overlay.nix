@@ -3,7 +3,7 @@ let
 in
 
 self: super: {
-  kops = self.callPackage ./kops {};
+  krops = self.callPackage ./krops {};
   populate = self.callPackage ./populate {};
   writeDash = name: text: self.writeScript name ''
     #! ${self.dash}/bin/dash
