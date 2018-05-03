@@ -43,7 +43,7 @@ let
 in
   pkgs.krops.writeDeploy "deploy" {
     source = source;
-    target = "root@192.168.56.101";
+    target = "root@YOUR_IP_ADDRESS_OR_HOST_NAME_HERE";
   }
 ```
 
