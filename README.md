@@ -24,8 +24,8 @@ let
 
   source = lib.evalSource [{
     nixpkgs.git = {
-      ref = "4b4bbce199d3b3a8001ee93495604289b01aaad3";
-      url = https://github.com/NixOS/nixpkgs;
+      ref = "origin/nixos-18.03";
+      url = https://github.com/NixOS/nixpkgs-channels;
     };
     nixos-config.file = toString (pkgs.writeText "nixos-config" ''
       { pkgs, ... }: {
