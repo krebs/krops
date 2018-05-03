@@ -14,10 +14,9 @@ create a krops.nix somewhere
 ```
 let
   #krops = ./.;
-  krops = (import <nixpkgs> {}).fetchgit {
+  krops = builtins.fetchGit {
     url = https://cgit.krebsco.de/krops/;
-    rev = "3022582ade8049e6ccf18f358cedb996d6716945";
-    sha256 = "0k3zhv2830z4bljcdvf6ciwjihk2zzcn9y23p49c6sba5hbsd6jb";
+    ref = "master";
   };
 
   lib = import "${krops}/lib";
@@ -27,7 +26,6 @@ let
     nixpkgs.git = {
       ref = "4b4bbce199d3b3a8001ee93495604289b01aaad3";
       url = https://github.com/NixOS/nixpkgs;
-
     };
     nixos-config.file = toString (pkgs.writeText "nixos-config" ''
       { pkgs, ... }: {
