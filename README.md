@@ -34,6 +34,9 @@ let
         boot.loader.systemd-boot.enable = true;
         services.openssh.enable = true;
         environment.systemPackages = [ pkgs.git ];
+        users.users.root.openssh.authorizedKeys.keys = [
+          "ssh-rsa ADD_YOUR_OWN_PUBLIC_KEY_HERE user@localhost"
+        ];
       }
     '');
   }];
