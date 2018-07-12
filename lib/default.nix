@@ -34,6 +34,12 @@ let {
       if lib.length y != 1 then throw "malformed /etc/hostname" else
       lib.elemAt y 0;
 
+    isLocalTarget = let
+      origin = lib.mkTarget "";
+    in target:
+      target.user == origin.user &&
+      lib.elem target.host [origin.host "localhost"];
+
     mkTarget = s: let
       default = defVal: val: if val != null then val else defVal;
       parse = lib.match "(([^@]+)@)?(([^:/]+))?(:([^/]+))?(/.*)?" s;

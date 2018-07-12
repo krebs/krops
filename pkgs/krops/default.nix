@@ -1,11 +1,5 @@
 let
-  lib = import ../../lib // {
-    isLocalTarget = let
-      origin = lib.mkTarget "";
-    in target:
-      target.host == origin.host &&
-      target.user == origin.user;
-  };
+  lib = import ../../lib;
 in
 
 { nix, openssh, populate, writeDash, writeJSON }: let
