@@ -51,6 +51,16 @@ let {
       path = default "/var/src" /* no default? */ (elemAt' parse 6);
     };
 
+    shell = let
+      isSafeChar = lib.testString "[-+./0-9:=A-Z_a-z]";
+      quoteChar = c:
+        if isSafeChar c then c
+        else if c == "\n" then "'\n'"
+        else "\\${c}";
+    in {
+      quote = x: if x == "" then "''" else lib.stringAsChars quoteChar x;
+    };
+
     test = re: x: lib.isString x && lib.testString re x;
     testString = re: x: lib.match re x != null;
 
