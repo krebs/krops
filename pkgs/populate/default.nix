@@ -42,6 +42,7 @@ let
       fi
       git checkout "$hash" -- ${quote target.path}
       git -c advice.detachedHead=false checkout -f "$hash"
+      git submodule update --init --recursive
     fi
 
     git clean -dfx
