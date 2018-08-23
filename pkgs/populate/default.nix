@@ -24,7 +24,7 @@ let
 
   pop.git = target: git: shell' target /* sh */ ''
     if ! test -e ${quote target.path}; then
-      git clone ${quote git.url} ${quote target.path}
+      git clone --recurse-submodules ${quote git.url} ${quote target.path}
     fi
     cd ${quote target.path}
     if ! url=$(git config remote.origin.url); then
