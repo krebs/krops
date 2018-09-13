@@ -112,7 +112,8 @@ let
           optionalString (!isLocalTarget target)
                          "${target.user}@${target.host}:" +
           target.path
-        )}
+        )} \
+      >&2
   '';
 
   shell' = target: script:
