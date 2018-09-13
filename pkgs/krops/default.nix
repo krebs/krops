@@ -23,12 +23,11 @@ in
       set -efu
       ${populate { inherit source; target = target'; }}
       ${nix}/bin/nix-build \
-          -A config.system.build.toplevel \
+          -A system \
           -I ${target'.path} \
-          --arg modules '[<nixos-config>]' \
           --no-out-link \
           --show-trace \
-          '<nixpkgs/nixos/lib/eval-config.nix>'
+          '<nixpkgs/nixos>'
     '';
 
 }
