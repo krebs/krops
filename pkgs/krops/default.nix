@@ -2,7 +2,7 @@ let
   lib = import ../../lib;
 in
 
-{ exec, nix, openssh, populate, writeDash, writeJSON }: rec {
+{ exec, nix, openssh, populate, writeDash }: rec {
 
   rebuild = target:
     exec "rebuild.${target.host}" rec {
