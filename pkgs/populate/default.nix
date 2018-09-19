@@ -1,7 +1,7 @@
 with import ../../lib;
 with shell;
 
-{ coreutils, dash, findutils, git, jq, openssh, rsync, writeDash }:
+{ coreutils, dash, findutils, git, jq, openssh, pass, rsync, writeDash }:
 
 let
   check = { force, target }: let
@@ -20,21 +20,21 @@ let
     fi
   '';
 
-  pop.file = target: file: rsync' target (quote file.path);
+  pop.file = target: source: rsync' target (quote source.path);
 
-  pop.git = target: git: shell' target /* sh */ ''
+  pop.git = target: source: shell' target /* sh */ ''
     if ! test -e ${quote target.path}; then
-      git clone --recurse-submodules ${quote git.url} ${quote target.path}
+      git clone --recurse-submodules ${quote source.url} ${quote target.path}
     fi
     cd ${quote target.path}
     if ! url=$(git config remote.origin.url); then
-      git remote add origin ${quote git.url}
-    elif test "$url" != ${quote git.url}; then
-      git remote set-url origin ${quote git.url}
+      git remote add origin ${quote source.url}
+    elif test "$url" != ${quote source.url}; then
+      git remote set-url origin ${quote source.url}
     fi
 
     # TODO resolve git_ref to commit hash
-    hash=${quote git.ref}
+    hash=${quote source.ref}
 
     if ! test "$(git log --format=%H -1)" = "$hash"; then
       if ! git log -1 "$hash" >/dev/null 2>&1; then
@@ -48,8 +48,8 @@ let
     git clean -dfx
   '';
 
-  pop.pass = target: pass: let
-    passPrefix = "${pass.dir}/${pass.name}";
+  pop.pass = target: source: let
+    passPrefix = "${source.dir}/${source.name}";
   in /* sh */ ''
     umask 0077
 
@@ -66,28 +66,28 @@ let
       rel_name=''${rel_name%.gpg}
 
       pass_date=$(
-        ${git}/bin/git -C ${quote pass.dir} log -1 --format=%aI "$gpg_path"
+        ${git}/bin/git -C ${quote source.dir} log -1 --format=%aI "$gpg_path"
       )
-      pass_name=${quote pass.name}/$rel_name
+      pass_name=${quote source.name}/$rel_name
       tmp_path=$tmp_dir/$rel_name
 
       ${coreutils}/bin/mkdir -p "$(${coreutils}/bin/dirname "$tmp_path")"
-      PASSWORD_STORE_DIR=${quote pass.dir} pass show "$pass_name" > "$tmp_path"
+      PASSWORD_STORE_DIR=${quote source.dir} ${pass}/bin/pass show "$pass_name" > "$tmp_path"
       ${coreutils}/bin/touch -d "$pass_date" "$tmp_path"
     done
 
     ${rsync' target /* sh */ "$tmp_dir"}
   '';
 
-  pop.pipe = target: pipe: /* sh */ ''
-    ${quote pipe.command} | {
+  pop.pipe = target: source: /* sh */ ''
+    ${quote source.command} | {
       ${shell' target /* sh */ "cat > ${quote target.path}"}
     }
   '';
 
   # TODO rm -fR instead of ln -f?
-  pop.symlink = target: symlink: shell' target /* sh */ ''
-    ln -fns ${quote symlink.target} ${quote target.path}
+  pop.symlink = target: source: shell' target /* sh */ ''
+    ln -fns ${quote source.target} ${quote target.path}
   '';
 
   populate = target: name: source: let
