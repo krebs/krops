@@ -48,3 +48,7 @@ in
 ```
 
 and run `$(nix-build krops.nix)`. This results in a script which deploys the machine via ssh & rsync on the target machine.
+
+## References
+
+- [Blog post with in-depth example](http://tech.ingolf-wagner.de/nixos/krops/) by [Ingolf Wagner](https://ingolf-wagner.de/)
