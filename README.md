@@ -3,6 +3,7 @@
 krops is a lightweigt toolkit to deploy nixos systems, remotely or locally.
 
 fancy features include:
+
 - store your secrets in passwordstore
 - build your system remotely
 - minimal overhead
