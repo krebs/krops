@@ -16,22 +16,22 @@ in
       ];
     };
 
-  writeDeploy = name: { source, target }: let
+  writeDeploy = name: { force ? false, source, target }: let
     target' = lib.mkTarget target;
   in
     writeDash name ''
       set -efu
-      ${populate { inherit source; target = target'; }}
+      ${populate { inherit force source; target = target'; }}
       ${rebuild target'}
     '';
 
-  writeTest = name: { source, target }: let
+  writeTest = name: { force ? false, source, target }: let
     target' = lib.mkTarget target;
   in
     assert lib.isLocalTarget target';
     writeDash name ''
       set -efu
-      ${populate { inherit source; target = target'; }}
+      ${populate { inherit force source; target = target'; }}
       ${nix}/bin/nix-build \
           -A system \
           -I ${target'.path} \
