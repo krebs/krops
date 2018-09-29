@@ -14,10 +14,9 @@ create a krops.nix somewhere
 ```
 let
   #krops = ./.;
-  krops = (import <nixpkgs> {}).fetchgit {
+  krops = builtins.fetchGit {
     url = https://cgit.krebsco.de/krops/;
-    rev = "3022582ade8049e6ccf18f358cedb996d6716945";
-    sha256 = "0k3zhv2830z4bljcdvf6ciwjihk2zzcn9y23p49c6sba5hbsd6jb";
+    ref = "master";
   };
 
   lib = import "${krops}/lib";
@@ -25,9 +24,8 @@ let
 
   source = lib.evalSource [{
     nixpkgs.git = {
-      ref = "4b4bbce199d3b3a8001ee93495604289b01aaad3";
-      url = https://github.com/NixOS/nixpkgs;
-
+      ref = "origin/nixos-18.03";
+      url = https://github.com/NixOS/nixpkgs-channels;
     };
     nixos-config.file = toString (pkgs.writeText "nixos-config" ''
       { pkgs, ... }: {
@@ -36,13 +34,16 @@ let
         boot.loader.systemd-boot.enable = true;
         services.openssh.enable = true;
         environment.systemPackages = [ pkgs.git ];
+        users.users.root.openssh.authorizedKeys.keys = [
+          "ssh-rsa ADD_YOUR_OWN_PUBLIC_KEY_HERE user@localhost"
+        ];
       }
     '');
   }];
 in
   pkgs.krops.writeDeploy "deploy" {
     source = source;
-    target = "root@192.168.56.101";
+    target = "root@YOUR_IP_ADDRESS_OR_HOST_NAME_HERE";
   }
 ```
 
