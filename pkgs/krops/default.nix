@@ -2,7 +2,19 @@ let
   lib = import ../../lib;
 in
 
-{ nix, openssh, populate, writeDash, writeJSON }: {
+{ exec, nix, openssh, populate, writeDash }: rec {
+
+  rebuild = target:
+    exec "rebuild.${target.host}" rec {
+      filename = "${openssh}/bin/ssh";
+      argv = [
+        filename
+        "-l" target.user
+        "-p" target.port
+        target.host
+        "nixos-rebuild switch -I ${lib.escapeShellArg target.path}"
+      ];
+    };
 
   writeDeploy = name: { source, target }: let
     target' = lib.mkTarget target;
@@ -10,9 +22,7 @@ in
     writeDash name ''
       set -efu
       ${populate { inherit source; target = target'; }}
-      ${openssh}/bin/ssh \
-          ${target'.user}@${target'.host} -p ${target'.port} \
-          nixos-rebuild switch -I ${target'.path}
+      ${rebuild target'}
     '';
 
   writeTest = name: { source, target }: let
@@ -23,12 +33,11 @@ in
       set -efu
       ${populate { inherit source; target = target'; }}
       ${nix}/bin/nix-build \
-          -A config.system.build.toplevel \
+          -A system \
           -I ${target'.path} \
-          --arg modules '[<nixos-config>]' \
           --no-out-link \
           --show-trace \
-          '<nixpkgs/nixos/lib/eval-config.nix>'
+          '<nixpkgs/nixos>'
     '';
 
 }

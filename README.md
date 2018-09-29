@@ -1,20 +1,21 @@
 # krops (krebs ops)
 
-krops is a lightweigt toolkit to deploy nixos systems, remotely or locally.
+krops is a lightweigt toolkit to deploy NixOS systems, remotely or locally.
 
-fancy features include:
-- store your secrets in passwordstore
+## Some Features
+
+- store your secrets in [password store](https://www.passwordstore.org/)
 - build your system remotely
-- minimal overhead
+- minimal overhead (it's basically just `nixos-rebuild switch`!)
 - run from custom nixpkgs branch/checkout/fork
 
-minimal example:
+## Minimal Example
 
-create a krops.nix somewhere
+Create a file named `krops.nix` (name doesn't matter) with following content:
+
 ```
 let
-  #krops = ./.;
-  krops = builtins.fetchGit {
+  krops = (import <nixpkgs> {}).fetchgit {
     url = https://cgit.krebsco.de/krops/;
     ref = "master";
   };
@@ -24,12 +25,11 @@ let
 
   source = lib.evalSource [{
     nixpkgs.git = {
-      ref = "origin/nixos-18.03";
-      url = https://github.com/NixOS/nixpkgs-channels;
+      ref = "4b4bbce199d3b3a8001ee93495604289b01aaad3";
+      url = https://github.com/NixOS/nixpkgs;
     };
     nixos-config.file = toString (pkgs.writeText "nixos-config" ''
       { pkgs, ... }: {
-
         fileSystems."/" = { device = "/dev/sda1"; };
         boot.loader.systemd-boot.enable = true;
         services.openssh.enable = true;
@@ -47,4 +47,11 @@ in
   }
 ```
 
-and run `$(nix-build krops.nix)`. This results in a script which deploys the machine via ssh & rsync on the target machine.
+and run `$(nix-build --no-out-link krops.nix)` to deploy the target machine.
+
+Under the hood, this will make the sources available on the target machine
+below `/var/src`, and execute `nixos-rebuild switch -I /var/src`.
+
+## References
+
+- [In-depth example](http://tech.ingolf-wagner.de/nixos/krops/) by [Ingolf Wagner](https://ingolf-wagner.de/)
