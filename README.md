@@ -57,3 +57,11 @@ below `/var/src`, and execute `nixos-rebuild switch -I /var/src`.
 ## References
 
 - [In-depth example](http://tech.ingolf-wagner.de/nixos/krops/) by [Ingolf Wagner](https://ingolf-wagner.de/)
+
+## Communication
+
+Comments, questions, pull-requests, etc. are very welcome, and can be directed
+at:
+
+- IRC: #krebs at freenode
+- Mail: [spam@krebsco.de](mailto:spam@krebsco.de)
