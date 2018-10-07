@@ -35,6 +35,7 @@ in
       ${nix}/bin/nix-build \
           -A system \
           -I ${target'.path} \
+          --keep-going \
           --no-out-link \
           --show-trace \
           '<nixpkgs/nixos>'
