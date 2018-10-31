@@ -56,6 +56,12 @@
     };
     git = lib.types.submodule {
       options = {
+        clean = {
+          exclude = lib.mkOption {
+            default = [];
+            type = lib.types.listOf lib.types.str;
+          };
+        };
         ref = lib.mkOption {
           type = lib.types.str; # TODO lib.types.git.ref
         };

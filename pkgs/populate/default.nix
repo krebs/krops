@@ -45,7 +45,10 @@ let
       git submodule update --init --recursive
     fi
 
-    git clean -dfx
+    git clean -dfx \
+        ${concatMapStringsSep " "
+          (pattern: /* sh */ "-e ${quote pattern}")
+          source.clean.exclude }
   '';
 
   pop.pass = target: source: let
