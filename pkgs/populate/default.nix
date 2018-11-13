@@ -40,8 +40,7 @@ let
       if ! git log -1 "$hash" >/dev/null 2>&1; then
         git fetch origin
       fi
-      git checkout "$hash" -- ${quote target.path}
-      git -c advice.detachedHead=false checkout -f "$hash"
+      git reset --hard "$hash" >&2
       git submodule update --init --recursive
     fi
 
