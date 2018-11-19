@@ -8,7 +8,7 @@ let
     sentinelFile = "${target.path}/.populate";
   in shell' target /* sh */ ''
     ${optionalString force /* sh */ ''
-      mkdir -vp ${quote (dirOf sentinelFile)}
+      mkdir -vp ${quote (dirOf sentinelFile)} >&2
       touch ${quote sentinelFile}
     ''}
     if ! test -f ${quote sentinelFile}; then
