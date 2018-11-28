@@ -16,6 +16,7 @@ let {
         };
       };
       sanitize = x: lib.getAttr (lib.typeOf x) {
+        bool = x;
         list = map sanitize x;
         set = lib.mapAttrs
                 (lib.const sanitize)

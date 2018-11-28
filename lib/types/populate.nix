@@ -52,6 +52,10 @@
         path = lib.mkOption {
           type = lib.types.absolute-pathname;
         };
+        useChecksum = lib.mkOption {
+          default = false;
+          type = lib.types.bool;
+        };
       };
     };
     git = lib.types.submodule {

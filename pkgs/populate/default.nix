@@ -20,7 +20,11 @@ let
     fi
   '';
 
-  pop.file = target: source: rsync' target (quote source.path);
+  pop.file = target: source: let
+    configAttrs = ["useChecksum"];
+    config = filterAttrs (name: _: elem name configAttrs) source;
+  in
+    rsync' target config (quote source.path);
 
   pop.git = target: source: shell' target /* sh */ ''
     if ! test -e ${quote target.path}; then
@@ -78,7 +82,7 @@ let
       ${coreutils}/bin/touch -d "$pass_date" "$tmp_path"
     done
 
-    ${rsync' target /* sh */ "$tmp_dir"}
+    ${rsync' target {} /* sh */ "$tmp_dir"}
   '';
 
   pop.pipe = target: source: /* sh */ ''
@@ -100,12 +104,13 @@ let
     ${pop.${source.type} target' source'}
   '';
 
-  rsync' = target: sourcePath: /* sh */ ''
+  rsync' = target: config: sourcePath: /* sh */ ''
     source_path=${sourcePath}
     if test -d "$source_path"; then
       source_path=$source_path/
     fi
     ${rsync}/bin/rsync \
+        ${optionalString (config.useChecksum or false) /* sh */ "--checksum"} \
         -e ${quote (ssh' target)} \
         -vFrlptD \
         --delete-excluded \
