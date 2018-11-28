@@ -89,7 +89,7 @@ let
 
   # TODO rm -fR instead of ln -f?
   pop.symlink = target: source: shell' target /* sh */ ''
-    ln -fns ${quote source.target} ${quote target.path}
+    ln -fnsT ${quote source.target} ${quote target.path}
   '';
 
   populate = target: name: source: let
