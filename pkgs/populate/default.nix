@@ -60,6 +60,17 @@ let
   in /* sh */ ''
     umask 0077
 
+    if test -e ${quote source.dir}/.git; then
+      local_pass_info=${quote source.name}\ $(${git}/bin/git -C ${quote source.dir} rev-parse HEAD)
+      remote_pass_info=$(${shell' target /* sh */ ''
+        cat ${quote target.path}/.pass_info || :
+      ''})
+
+      if test "$local_pass_info" = "$remote_pass_info"; then
+        exit 0
+      fi
+    fi
+
     tmp_dir=$(${coreutils}/bin/mktemp -dt populate-pass.XXXXXXXX)
     trap cleanup EXIT
     cleanup() {
@@ -82,6 +93,10 @@ let
       PASSWORD_STORE_DIR=${quote source.dir} ${pass}/bin/pass show "$pass_name" > "$tmp_path"
       ${coreutils}/bin/touch -d "$pass_date" "$tmp_path"
     done
+
+    if test -n "''${local_pass_info-}"; then
+      echo "$local_pass_info" > "$tmp_dir"/.pass_info
+    fi
 
     ${rsync' target {} /* sh */ "$tmp_dir"}
   '';
