@@ -27,6 +27,7 @@ let
     rsync' target config (quote source.path);
 
   pop.git = target: source: shell' target /* sh */ ''
+    set -efu
     if ! test -e ${quote target.path}; then
       git clone --recurse-submodules ${quote source.url} ${quote target.path}
     fi
