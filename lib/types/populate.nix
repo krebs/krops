@@ -11,6 +11,14 @@
                     else throw "cannot determine type";
         type = lib.types.enum known-types;
       };
+      derivation = lib.mkOption {
+        apply = x:
+          if lib.types.str.check x
+            then { text = x; }
+            else x;
+        default = null;
+        type = lib.types.nullOr (lib.types.either lib.types.str source-types.derivation);
+      };
       file = lib.mkOption {
         apply = x:
           if lib.types.absolute-pathname.check x
@@ -47,6 +55,13 @@
   });
 
   source-types = {
+    derivation = lib.types.submodule {
+      options = {
+        text = lib.mkOption {
+          type = lib.types.str;
+        };
+      };
+    };
     file = lib.types.submodule {
       options = {
         path = lib.mkOption {

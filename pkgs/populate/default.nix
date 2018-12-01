@@ -20,6 +20,10 @@ let
     fi
   '';
 
+  pop.derivation = target: source: shell' target /* sh */ ''
+    nix-build -E ${quote source.text} -o ${quote target.path}
+  '';
+
   pop.file = target: source: let
     configAttrs = ["useChecksum"];
     config = filterAttrs (name: _: elem name configAttrs) source;
