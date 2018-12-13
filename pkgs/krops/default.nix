@@ -32,9 +32,9 @@ in
     writeDash name ''
       set -efu
       ${populate { inherit force source; target = target'; }}
+      NIX_PATH=${lib.escapeShellArg target'.path} \
       ${nix}/bin/nix-build \
           -A system \
-          -I ${target'.path} \
           --keep-going \
           --no-out-link \
           --show-trace \
