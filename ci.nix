@@ -14,6 +14,7 @@ let
         environment.systemPackages = [ pkgs.git ];
       }
     '');
+    nixpkgs.symlink = toString <nixpkgs>;
   }];
 in {
   test = pkgs.krops.writeTest "test" {
