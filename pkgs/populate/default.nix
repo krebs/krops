@@ -67,7 +67,7 @@ let
     umask 0077
 
     if test -e ${quote source.dir}/.git; then
-      local_pass_info=${quote source.name}\ $(${git}/bin/git -C ${quote source.dir} rev-parse HEAD)
+      local_pass_info=${quote source.name}\ $(${git}/bin/git -C ${quote source.dir} log -1 --format=%H ${quote source.name})
       remote_pass_info=$(${shell' target /* sh */ ''
         cat ${quote target.path}/.pass_info || :
       ''})
