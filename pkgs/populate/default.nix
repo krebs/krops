@@ -62,6 +62,8 @@ let
   pop.pass = target: source: let
     passPrefix = "${source.dir}/${source.name}";
   in /* sh */ ''
+    set -efu
+
     umask 0077
 
     if test -e ${quote source.dir}/.git; then
