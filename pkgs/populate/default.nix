@@ -21,7 +21,7 @@ let
   '';
 
   pop.derivation = target: source: shell' target /* sh */ ''
-    nix-build -E ${quote source.text} -o ${quote target.path}
+    nix-build -E ${quote source.text} -o ${quote target.path} >&2
   '';
 
   pop.file = target: source: let
