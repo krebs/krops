@@ -31,7 +31,7 @@ in
     assert lib.isLocalTarget target';
     writeDash name ''
       set -efu
-      ${populate { inherit force source; target = target'; }}
+      ${populate { inherit force source; target = target'; }} >&2
       NIX_PATH=${lib.escapeShellArg target'.path} \
       ${nix}/bin/nix-build \
           -A system \
