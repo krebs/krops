@@ -4,6 +4,24 @@ in
 
 { exec, nix, openssh, populate, writeDash }: rec {
 
+  build = target:
+    exec "rebuild.${target.host}" rec {
+      filename = "${openssh}/bin/ssh";
+      argv = [
+        filename
+        "-l" target.user
+        "-p" target.port
+        "-t"
+        target.host
+        (lib.concatStringsSep " " [
+          "nix build"
+          "-I ${lib.escapeShellArg target.path}"
+          "--no-link -f '<nixpkgs/nixos>'"
+          "config.system.build.toplevel"
+        ])
+      ];
+    };
+
   rebuild = args: target:
     exec "rebuild.${target.host}" rec {
       filename = "${openssh}/bin/ssh";
@@ -24,6 +42,7 @@ in
     writeDash name ''
       set -efu
       ${populate { inherit force source; target = target'; }}
+      ${build target'}
       ${rebuild ["switch"] target'}
     '';
 
