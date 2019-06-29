@@ -8,8 +8,8 @@ let
 in
 
 import <nixpkgs> (args // {
-  overlays = overlays ++ [
+  overlays = [
     (import ./overlay.nix)
     (import "${nix-writers}/pkgs")
-  ];
+  ] ++ overlays;
 })
