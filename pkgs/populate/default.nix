@@ -20,6 +20,26 @@ let
     fi
   '';
 
+  do-backup = { target }: let
+    sentinelFile = "${target.path}/.populate";
+  in
+    shell' target /* sh */ ''
+      if ! test -d ${quote sentinelFile}; then
+        >&2 printf 'error" sentinel file is not a directory: %s\n' ${quote (
+          optionalString (!isLocalTarget target) "${target.host}:" +
+          sentinelFile
+        )}
+        exit 1
+      fi
+      rsync >&2 \
+          -aAXF \
+          --delete \
+          --exclude /.populate \
+          --link-dest=${quote target.path} \
+          ${target.path}/ \
+          ${target.path}/.populate/backup/
+    '';
+
   pop.derivation = target: source: shell' target /* sh */ ''
     nix-build -E ${quote source.text} -o ${quote target.path} >&2
   '';
@@ -162,9 +182,11 @@ let
 
 in
 
-{ force ? false, source, target }: writeDash "populate.${target.host}" ''
+{ backup ? false, force ? false, source, target }:
+writeDash "populate.${target.host}" ''
   set -efu
   ${check { inherit force target; }}
   set -x
+  ${optionalString backup (do-backup { inherit target; })}
   ${concatStringsSep "\n" (mapAttrsToList (populate target) source)}
 ''
