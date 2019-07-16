@@ -42,6 +42,7 @@ in
     writeDash name ''
       set -efu
       ${populate { inherit force source; target = target'; }}
+      ${rebuild ["dry-build"] target'}
       ${build target'}
       ${rebuild ["switch"] target'}
     '';
