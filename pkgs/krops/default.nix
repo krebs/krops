@@ -36,24 +36,24 @@ in
       ];
     };
 
-  writeDeploy = name: { force ? false, source, target }: let
+  writeDeploy = name: { backup ? false, force ? false, source, target }: let
     target' = lib.mkTarget target;
   in
     writeDash name ''
       set -efu
-      ${populate { inherit force source; target = target'; }}
+      ${populate { inherit backup force source; target = target'; }}
       ${rebuild ["dry-build"] target'}
       ${build target'}
       ${rebuild ["switch"] target'}
     '';
 
-  writeTest = name: { force ? false, source, target }: let
+  writeTest = name: { backup ? false, force ? false, source, target }: let
     target' = lib.mkTarget target;
   in
     assert lib.isLocalTarget target';
     writeDash name ''
       set -efu
-      ${populate { inherit force source; target = target'; }} >&2
+      ${populate { inherit backup force source; target = target'; }} >&2
       NIX_PATH=${lib.escapeShellArg target'.path} \
       ${nix}/bin/nix-build \
           -A system \
