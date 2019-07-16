@@ -5,7 +5,7 @@ in
 { exec, nix, openssh, populate, writeDash }: rec {
 
   build = target:
-    exec "rebuild.${target.host}" rec {
+    exec "build.${target.host}" rec {
       filename = "${openssh}/bin/ssh";
       argv = [
         filename
