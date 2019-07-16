@@ -11,7 +11,7 @@ let
       mkdir -vp ${quote (dirOf sentinelFile)} >&2
       touch ${quote sentinelFile}
     ''}
-    if ! test -f ${quote sentinelFile}; then
+    if ! test -e ${quote sentinelFile}; then
       >&2 printf 'error: missing sentinel file: %s\n' ${quote (
         optionalString (!isLocalTarget target) "${target.host}:" +
         sentinelFile
