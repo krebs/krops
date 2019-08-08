@@ -66,9 +66,13 @@ let
     hash=${quote source.ref}
 
     if ! test "$(git log --format=%H -1)" = "$hash"; then
-      if ! git log -1 "$hash" >/dev/null 2>&1; then
+      ${if source.fetchAlways then /* sh */ ''
         git fetch origin
-      fi
+      '' else /* sh */ ''
+        if ! git log -1 "$hash" >/dev/null 2>&1; then
+          git fetch origin
+        fi
+      ''}
       git reset --hard "$hash" >&2
       git submodule update --init --recursive
     fi

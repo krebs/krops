@@ -81,6 +81,10 @@
             type = lib.types.listOf lib.types.str;
           };
         };
+        fetchAlways = lib.mkOption {
+          type = lib.types.bool;
+          default = false;
+        };
         ref = lib.mkOption {
           type = lib.types.str; # TODO lib.types.git.ref
         };
