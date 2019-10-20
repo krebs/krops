@@ -36,18 +36,31 @@ in
       ];
     };
 
-  writeDeploy = name: { backup ? false, force ? false, source, target }: let
+  writeDeploy = name: {
+    backup ? false,
+    fast ? false,
+    force ? false,
+    source,
+    target
+  }: let
     target' = lib.mkTarget target;
   in
     writeDash name ''
       set -efu
       ${populate { inherit backup force source; target = target'; }}
-      ${rebuild ["dry-build"] target'}
-      ${build target'}
+      ${lib.optionalString (! fast) ''
+        ${rebuild ["dry-build"] target'}
+        ${build target'}
+      ''}
       ${rebuild ["switch"] target'}
     '';
 
-  writeTest = name: { backup ? false, force ? false, source, target }: let
+  writeTest = name: {
+    backup ? false,
+    force ? false,
+    source,
+    target
+  }: let
     target' = lib.mkTarget target;
   in
     assert lib.isLocalTarget target';
