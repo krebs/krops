@@ -30,6 +30,21 @@ in
       ];
     };
 
+  writeCommand = name: {
+    command ? (targetPath: "echo ${targetPath}"),
+    backup ? false,
+    force ? false,
+    source,
+    target
+  }: let
+    target' = lib.mkTarget target;
+  in
+    writeDash name ''
+      set -efu
+      ${populate { inherit backup force source; target = target'; }}
+      ${remoteCommand target' (command target'.path)}
+    '';
+
   writeDeploy = name: {
     backup ? false,
     fast ? false,
