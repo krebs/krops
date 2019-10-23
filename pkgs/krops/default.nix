@@ -5,6 +5,19 @@ in
 { exec, nix, openssh, populate, writeDash }: rec {
 
   build = target:
+    remoteCommand target (lib.concatStringsSep " " [
+      "nix build"
+      "-I ${lib.escapeShellArg target.path}"
+      "--no-link -f '<nixpkgs/nixos>'"
+      "config.system.build.toplevel"
+    ]);
+
+  rebuild = args: target:
+    remoteCommand target "nixos-rebuild -I ${lib.escapeShellArg target.path} ${
+      lib.concatMapStringsSep " " lib.escapeShellArg args
+    }";
+
+  remoteCommand = target: command:
     exec "build.${target.host}" rec {
       filename = "${openssh}/bin/ssh";
       argv = [
@@ -13,26 +26,7 @@ in
         "-p" target.port
         "-t"
         target.host
-        (lib.concatStringsSep " " [
-          "nix build"
-          "-I ${lib.escapeShellArg target.path}"
-          "--no-link -f '<nixpkgs/nixos>'"
-          "config.system.build.toplevel"
-        ])
-      ];
-    };
-
-  rebuild = args: target:
-    exec "rebuild.${target.host}" rec {
-      filename = "${openssh}/bin/ssh";
-      argv = [
-        filename
-        "-l" target.user
-        "-p" target.port
-        target.host
-        "nixos-rebuild -I ${lib.escapeShellArg target.path} ${
-          lib.concatMapStringsSep " " lib.escapeShellArg args
-        }"
+        command
       ];
     };
 
