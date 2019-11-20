@@ -19,8 +19,8 @@ Create a file named `krops.nix` (name doesn't matter) with following content:
 let
   krops = (import <nixpkgs> {}).fetchgit {
     url = https://cgit.krebsco.de/krops/;
-    rev = "3022582ade8049e6ccf18f358cedb996d6716945";
-    sha256 = "0k3zhv2830z4bljcdvf6ciwjihk2zzcn9y23p49c6sba5hbsd6jb";
+    rev = "v1.17.0";
+    sha256 = "150jlz0hlb3ngf9a1c9xgcwzz1zz8v2lfgnzw08l3ajlaaai8smd";
   };
 
   lib = import "${krops}/lib";
