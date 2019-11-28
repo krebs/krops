@@ -20,9 +20,9 @@ in
   remoteCommand = target: command:
     exec "build.${target.host}" rec {
       filename = "${openssh}/bin/ssh";
-      argv = [
+      argv = lib.flatten [
         filename
-        "-l" target.user
+        (lib.optionals (target.user != "") ["-l" target.user])
         "-p" target.port
         "-t"
         target.host

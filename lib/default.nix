@@ -44,7 +44,7 @@ let {
 
     mkTarget = s: let
       default = defVal: val: if val != null then val else defVal;
-      parse = lib.match "(([^@]+)@)?(([^:/]+))?(:([^/]+))?(/.*)?" s;
+      parse = lib.match "(([^@]*)@)?(([^:/]+))?(:([^/]+))?(/.*)?" s;
       elemAt' = xs: i: if lib.length xs > i then lib.elemAt xs i else null;
     in {
       user = default (lib.getEnv "LOGNAME") (elemAt' parse 1);
