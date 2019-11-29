@@ -26,7 +26,7 @@ in
         "-p" target.port
         "-t"
         target.host
-        command
+        (if target.sudo then command else "sudo ${command}")
       ];
     };
 

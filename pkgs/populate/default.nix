@@ -157,6 +157,7 @@ let
     fi
     ${rsync}/bin/rsync \
         ${optionalString (config.useChecksum or false) /* sh */ "--checksum"} \
+        ${optionalString target.sudo /* sh */ "--rsync-path=\"sudo rsync\""} \
         -e ${quote (ssh' target)} \
         -vFrlptD \
         --delete-excluded \
@@ -172,9 +173,12 @@ let
   shell' = target: script:
     if isLocalTarget target
       then script
-      else /* sh */ ''
-        ${ssh' target} ${quote target.host} ${quote script}
-      '';
+      else
+        if target.sudo then /* sh */ ''
+          ${ssh' target} ${quote target.host} ${quote "sudo bash -c ${quote script}"}
+        '' else ''
+          ${ssh' target} ${quote target.host} ${quote script}
+        '';
 
   ssh' = target: concatMapStringsSep " " quote [
     "${openssh}/bin/ssh"
