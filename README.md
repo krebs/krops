@@ -15,7 +15,7 @@ krops is a lightweigt toolkit to deploy NixOS systems, remotely or locally.
 
 Create a file named `krops.nix` (name doesn't matter) with following content:
 
-```
+```nix
 let
   krops = (import <nixpkgs> {}).fetchgit {
     url = https://cgit.krebsco.de/krops/;
@@ -56,6 +56,37 @@ and run `$(nix-build --no-out-link krops.nix)` to deploy the target machine.
 Under the hood, this will make the sources available on the target machine
 below `/var/src`, and execute `nixos-rebuild switch -I /var/src`.
 
+## Deployment Target Attribute
+
+The `target` attribute to `writeDeploy` can either be a string or an attribute
+set, specifying where to make the sources available, as well as where to run
+the deployment.
+
+If specified as string, the format could be described as:
+```
+[[USER]@]HOST[:PORT][/SOME/PATH]
+```
+
+Portions in square brakets are optional.
+
+If the `USER` is the empty string, as in e.g. `@somehost`, then the username
+will be obtained by SSH from its configuration files.
+
+If the `target` attribute is an attribute set, then it has to define the attributes
+`host`, `path`, `port`, `sudo`, and `user`.  This allows to deploy to targets
+that don't allow sshing in as root, but allow (preferably passwordless) sudo:
+
+```nix
+pkgs.krops.writeDeploy "deploy" {
+  source = /* ... */;
+  target = lib.mkTarget "user@host/path" // {
+    sudo = true;
+  };
+}
+```
+
+For more details about the `target` attribute, please check the `mkTarget`
+function in lib/default.nix.
 
 ## Source Types
 
