@@ -71,6 +71,11 @@
           default = false;
           type = lib.types.bool;
         };
+        exclude = lib.mkOption {
+          type = lib.types.listOf lib.types.str;
+          default = [];
+          example = [".git"];
+        };
       };
     };
     git = lib.types.submodule {
