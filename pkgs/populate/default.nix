@@ -45,7 +45,7 @@ let
   '';
 
   pop.file = target: source: let
-    configAttrs = ["useChecksum"];
+    configAttrs = ["useChecksum" "exclude"];
     config = filterAttrs (name: _: elem name configAttrs) source;
   in
     rsync' target config (quote source.path);
@@ -156,8 +156,11 @@ let
       source_path=$source_path/
     fi
     ${rsync}/bin/rsync \
-        ${optionalString (config.useChecksum or false) /* sh */ "--checksum"} \
+        ${optionalString config.useChecksum /* sh */ "--checksum"} \
         ${optionalString target.sudo /* sh */ "--rsync-path=\"sudo rsync\""} \
+        ${concatMapStringsSep " "
+          (pattern: /* sh */ "--exclude ${quote pattern}")
+          config.exclude} \
         -e ${quote (ssh' target)} \
         -vFrlptD \
         --delete-excluded \

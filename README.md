@@ -114,6 +114,13 @@ Supported attributes:
   boolean that controls whether file contents should be checked to decide
   whether a file has changed.  This is useful when `path` points at files
   with mangled timestamps, e.g. the Nix store.
+  
+* `exclude` (optional)
+  List of patterns that should excluded from being synced. The list will be
+  passed to the `--exclude` option of [`rsync`](https://rsync.samba.org/).
+  Checkout the filter rules section in the [rsync
+  manual](https://download.samba.org/pub/rsync/rsync.html) for further
+  information.
 
 
 ### `git`
