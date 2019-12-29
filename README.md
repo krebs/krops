@@ -1,6 +1,6 @@
 # krops (krebs ops)
 
-krops is a lightweigt toolkit to deploy NixOS systems, remotely or locally.
+krops is a lightweight toolkit to deploy NixOS systems, remotely or locally.
 
 
 ## Some Features
@@ -56,7 +56,9 @@ and run `$(nix-build --no-out-link krops.nix)` to deploy the target machine.
 Under the hood, this will make the sources available on the target machine
 below `/var/src`, and execute `nixos-rebuild switch -I /var/src`.
 
-## Deployment Target Attribute
+## Deployment Attributes
+
+### `target`
 
 The `target` attribute to `writeDeploy` can either be a string or an attribute
 set, specifying where to make the sources available, as well as where to run
@@ -84,9 +86,31 @@ pkgs.krops.writeDeploy "deploy" {
   };
 }
 ```
-
 For more details about the `target` attribute, please check the `mkTarget`
-function in lib/default.nix.
+function in [lib/default.nix](lib/defaults.nix).
+
+### `backup` (optional, defaults to false)
+
+Backup all paths specified in source before syncing new sources.
+
+### `buildTarget` (optional)
+
+If set the evaluation and build of the system will be executed on this host.
+`buildTarget` takes the same arguments as target.
+Sources will be synced to both `buildTarget` and `target`.
+Built packages will be uploaded from the `buildTarget` to `target` directly
+This requires the building machine to have ssh access to the target.
+To build the system on the same machine, that runs the krops command,
+set up a local ssh service and set the build host to localhost.
+
+### `fast` (optional, defaults to false)
+
+Run `nixos-rebuild switch` immediately without building the system
+in a dedicated `nix build` step.
+
+### `force` (optional, defaults to false)
+
+Create the sentinel file (`/var/src/.populate`) before syncing the new source.
 
 ## Source Types
 
