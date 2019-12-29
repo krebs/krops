@@ -103,6 +103,17 @@ This requires the building machine to have ssh access to the target.
 To build the system on the same machine, that runs the krops command,
 set up a local ssh service and set the build host to localhost.
 
+### `crossDeploy` (optional, defaults to false)
+
+Use this option if target host architecture is not the same as the build host
+architecture as set by `buildHost` i.e. deploying to aarch64 from a x86_64
+machine. Setting this option will disable building & running nix in the wrong
+architecture when running `nixos-rebuild` on the deploying machine. It is
+required to set `nixpkgs.localSystem.system` in the NixOS configuration to the
+architecture of the target host. This option is only useful if the build host
+also has remote builders that are capable of producing artifacts for the deploy
+architecture.
+
 ### `fast` (optional, defaults to false)
 
 Run `nixos-rebuild switch` immediately without building the system

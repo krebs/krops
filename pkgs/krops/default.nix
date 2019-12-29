@@ -48,6 +48,7 @@ in
   writeDeploy = name: {
     backup ? false,
     buildTarget ? null,
+    crossDeploy ? false,
     fast ? false,
     force ? false,
     source,
@@ -70,6 +71,8 @@ in
       ''}
       ${rebuild ([
         "switch"
+      ] ++ lib.optionals crossDeploy [
+        "--no-build-nix"
       ] ++ lib.optionals (buildTarget' != target') [
         "--build-host" "${buildTarget'.user}@${buildTarget'.host}"
         "--target-host" "${target'.user}@${target'.host}"
