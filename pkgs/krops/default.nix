@@ -47,21 +47,36 @@ in
 
   writeDeploy = name: {
     backup ? false,
+    buildTarget ? null,
+    crossDeploy ? false,
     fast ? false,
     force ? false,
     source,
     target
   }: let
+    buildTarget' =
+      if buildTarget == null
+        then target'
+        else lib.mkTarget buildTarget;
     target' = lib.mkTarget target;
   in
     writeDash name ''
       set -efu
+      ${lib.optionalString (buildTarget' != target')
+        (populate { inherit backup force source; target = buildTarget'; })}
       ${populate { inherit backup force source; target = target'; }}
       ${lib.optionalString (! fast) ''
-        ${rebuild ["dry-build"] target'}
-        ${build target'}
+        ${rebuild ["dry-build"] buildTarget'}
+        ${build buildTarget'}
       ''}
-      ${rebuild ["switch"] target'}
+      ${rebuild ([
+        "switch"
+      ] ++ lib.optionals crossDeploy [
+        "--no-build-nix"
+      ] ++ lib.optionals (buildTarget' != target') [
+        "--build-host" "${buildTarget'.user}@${buildTarget'.host}"
+        "--target-host" "${target'.user}@${target'.host}"
+      ]) buildTarget'}
     '';
 
   writeTest = name: {
