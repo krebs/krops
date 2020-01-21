@@ -145,8 +145,9 @@ let
   populate = target: name: source: let
     source' = source.${source.type};
     target' = target // { path = "${target.path}/${name}"; };
-  in writeDash "populate.${target'.host}.${name}" ''
+  in writeDash "populate.${target'.host}.${replaceChars ["/"] ["_"] name}" ''
     set -efu
+    ${shell' target /* sh */ "mkdir -p $(dirname ${target'.path})"}
     ${pop.${source.type} target' source'}
   '';
 
