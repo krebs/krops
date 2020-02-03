@@ -157,6 +157,17 @@ Supported attributes:
   manual](https://download.samba.org/pub/rsync/rsync.html) for further
   information.
 
+* `filters` (optional)
+  List of filters that should be passed to rsync. Filters are specified as
+  attribute sets with the attributes `type` and `pattern`. Supported filter
+  types are `include` and `exclude`. This allows for more advanced
+  configurations.
+
+* `deleteExcluded` (optional)
+  boolean that controls whether the excluded directories should be deleted
+  if they exist on the target. This is passed to the `--delete-excluded` option
+  of rsync. Defaults to `true`.
+
 
 ### `git`
 
