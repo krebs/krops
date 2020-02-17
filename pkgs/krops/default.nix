@@ -2,7 +2,7 @@ let
   lib = import ../../lib;
 in
 
-{ exec, nix, openssh, populate, writeDash }: rec {
+{ nix, openssh, populate, writers }: rec {
 
   build = target:
     remoteCommand target (lib.concatStringsSep " " [
@@ -18,17 +18,14 @@ in
     }";
 
   remoteCommand = target: command:
-    exec "build.${target.host}" rec {
-      filename = "${openssh}/bin/ssh";
-      argv = lib.flatten [
-        filename
+    writers.writeDash "build.${target.host}" ''
+      exec ${openssh}/bin/ssh ${lib.escapeShellArgs (lib.flatten [
         (lib.optionals (target.user != "") ["-l" target.user])
         "-p" target.port
         "-t"
         target.host
-        (if target.sudo then "sudo ${command}" else command)
-      ];
-    };
+        (if target.sudo then "sudo ${command}" else command)])}
+    '';
 
   writeCommand = name: {
     command ? (targetPath: "echo ${targetPath}"),
@@ -39,7 +36,7 @@ in
   }: let
     target' = lib.mkTarget target;
   in
-    writeDash name ''
+    writers.writeDash name ''
       set -efu
       ${populate { inherit backup force source; target = target'; }}
       ${remoteCommand target' (command target'.path)}
@@ -60,7 +57,7 @@ in
         else lib.mkTarget buildTarget;
     target' = lib.mkTarget target;
   in
-    writeDash name ''
+    writers.writeDash name ''
       set -efu
       ${lib.optionalString (buildTarget' != target')
         (populate { inherit backup force source; target = buildTarget'; })}
@@ -88,7 +85,7 @@ in
     target' = lib.mkTarget target;
   in
     assert lib.isLocalTarget target';
-    writeDash name ''
+    writers.writeDash name ''
       set -efu
       ${populate { inherit backup force source; target = target'; }} >&2
       NIX_PATH=${lib.escapeShellArg target'.path} \
@@ -99,5 +96,4 @@ in
           --show-trace \
           '<nixpkgs/nixos>'
     '';
-
 }
