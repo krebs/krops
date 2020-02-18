@@ -1,7 +1,7 @@
 with import ../../lib;
 with shell;
 
-{ coreutils, dash, findutils, git, jq, openssh, pass, rsync, writeDash }:
+{ coreutils, dash, findutils, git, jq, openssh, pass, rsync, writers }:
 
 let
   check = { force, target }: let
@@ -145,7 +145,7 @@ let
   populate = target: name: source: let
     source' = source.${source.type};
     target' = target // { path = "${target.path}/${name}"; };
-  in writeDash "populate.${target'.host}.${name}" ''
+  in writers.writeDash "populate.${target'.host}.${name}" ''
     set -efu
     ${pop.${source.type} target' source'}
   '';
@@ -196,7 +196,7 @@ let
 in
 
 { backup ? false, force ? false, source, target }:
-writeDash "populate.${target.host}" ''
+writers.writeDash "populate.${target.host}" ''
   set -efu
   ${check { inherit force target; }}
   set -x
