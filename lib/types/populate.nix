@@ -54,6 +54,18 @@
     };
   });
 
+  filter = lib.types.submodule {
+    options = {
+      type = lib.mkOption {
+        type = lib.types.enum ["include" "exclude"];
+        default = "exclude";
+      };
+      pattern = lib.mkOption {
+        type = lib.types.str;
+      };
+    };
+  };
+
   source-types = {
     derivation = lib.types.submodule {
       options = {
@@ -75,6 +87,28 @@
           type = lib.types.listOf lib.types.str;
           default = [];
           example = [".git"];
+        };
+        filters = lib.mkOption {
+          type = lib.types.listOf filter;
+          default = [];
+          example = [
+            {
+              type = "include";
+              pattern = "*.nix";
+            }
+            {
+              type = "include";
+              pattern = "*/";
+            }
+            {
+              type = "exclude";
+              pattern = "*";
+            }
+          ];
+        };
+        deleteExcluded = lib.mkOption {
+          default = true;
+          type = lib.types.bool;
         };
       };
     };

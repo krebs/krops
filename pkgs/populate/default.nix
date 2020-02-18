@@ -45,7 +45,7 @@ let
   '';
 
   pop.file = target: source: let
-    configAttrs = ["useChecksum" "exclude"];
+    configAttrs = ["useChecksum" "exclude" "filters" "deleteExcluded"];
     config = filterAttrs (name: _: elem name configAttrs) source;
   in
     rsync' target config (quote source.path);
@@ -161,9 +161,12 @@ let
         ${concatMapStringsSep " "
           (pattern: /* sh */ "--exclude ${quote pattern}")
           (config.exclude or [])} \
+        ${concatMapStringsSep " "
+          (filter: /* sh */ "--${filter.type} ${quote filter.pattern}")
+          (config.filters or [])} \
         -e ${quote (ssh' target)} \
         -vFrlptD \
-        --delete-excluded \
+        ${optionalString (config.deleteExcluded or true) /* sh */ "--delete-excluded"} \
         "$source_path" \
         ${quote (
           optionalString (!isLocalTarget target) (
