@@ -84,6 +84,16 @@
           type = lib.types.bool;
         };
         exclude = lib.mkOption {
+          apply = x:
+            if x != [] then
+              lib.warn
+                "file.*.exclude is deprecated in favor of file.*.filters"
+                x
+            else
+              x;
+          description = ''
+            DEPRECATED, use `filters`.
+          '';
           type = lib.types.listOf lib.types.str;
           default = [];
           example = [".git"];

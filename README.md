@@ -149,19 +149,14 @@ Supported attributes:
   boolean that controls whether file contents should be checked to decide
   whether a file has changed.  This is useful when `path` points at files
   with mangled timestamps, e.g. the Nix store.
-  
-* `exclude` (optional)
-  List of patterns that should excluded from being synced. The list will be
-  passed to the `--exclude` option of [`rsync`](https://rsync.samba.org/).
-  Checkout the filter rules section in the [rsync
-  manual](https://download.samba.org/pub/rsync/rsync.html) for further
-  information.
 
 * `filters` (optional)
-  List of filters that should be passed to rsync. Filters are specified as
-  attribute sets with the attributes `type` and `pattern`. Supported filter
-  types are `include` and `exclude`. This allows for more advanced
-  configurations.
+  List of filters that should be passed to [`rsync`](https://rsync.samba.org/).
+  Filters are specified as attribute sets with the attributes `type` and
+  `pattern`.  Supported filter types are `include` and `exclude`.
+  Checkout the filter rules section in the
+  [rsync manual](https://download.samba.org/pub/rsync/rsync.html)
+  for further information.
 
 * `deleteExcluded` (optional)
   boolean that controls whether the excluded directories should be deleted
