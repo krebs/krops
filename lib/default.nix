@@ -43,16 +43,22 @@ let {
       lib.elem target.host [origin.host "localhost"];
 
     mkTarget = s: let
-      default = defVal: val: if val != null then val else defVal;
       parse = lib.match "(([^@]*)@)?(([^:/]+))?(:([^/]+))?(/.*)?" s;
       elemAt' = xs: i: if lib.length xs > i then lib.elemAt xs i else null;
-    in if lib.isString s then {
-      user = default (lib.getEnv "LOGNAME") (elemAt' parse 1);
-      host = default (lib.maybeEnv "HOSTNAME" lib.getHostName) (elemAt' parse 3);
-      port = default "22" /* "ssh"? */ (elemAt' parse 5);
-      path = default "/var/src" /* no default? */ (elemAt' parse 6);
+      filterNull = lib.filterAttrs (n: v: v != null);
+    in {
+      user = lib.getEnv "LOGNAME";
+      host = lib.maybeEnv "HOSTNAME" lib.getHostName;
+      port = "22";
+      path = "/var/src";
       sudo = false;
-    } else s;
+      extraOptions = [];
+    } // (if lib.isString s then filterNull {
+      user = elemAt' parse 1;
+      host = elemAt' parse 3;
+      port = elemAt' parse 5;
+      path = elemAt' parse 6;
+    } else s);
 
     shell = let
       isSafeChar = lib.testString "[-+./0-9:=A-Z_a-z]";

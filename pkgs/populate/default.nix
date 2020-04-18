@@ -194,6 +194,7 @@ let
     "-o" "ControlPersist=no"
     "-p" target.port
     "-T"
+    target.extraOptions
   ]);
 
 in
