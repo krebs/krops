@@ -52,6 +52,7 @@ let {
       port = default "22" /* "ssh"? */ (elemAt' parse 5);
       path = default "/var/src" /* no default? */ (elemAt' parse 6);
       sudo = false;
+      extraOptions = [];
     } else s;
 
     shell = let

@@ -23,6 +23,7 @@ in
         (lib.optionals (target.user != "") ["-l" target.user])
         "-p" target.port
         "-t"
+        target.extraOptions
         target.host
         (if target.sudo then "sudo ${command}" else command)])}
     '';
