@@ -72,16 +72,23 @@ If specified as string, the format could be described as:
 Portions in square brakets are optional.
 
 If the `USER` is the empty string, as in e.g. `@somehost`, then the username
-will be obtained by SSH from its configuration files.
+will be obtained by ssh from its configuration files.
 
-If the `target` attribute is an attribute set, then it has to define the attributes
-`host`, `path`, `port`, `sudo`, and `user`.  This allows to deploy to targets
-that don't allow sshing in as root, but allow (preferably passwordless) sudo:
+If the `target` attribute is an attribute set, then it can specify the
+attributes `extraOptions`, `host`, `path`, `port`, `sudo`, and `user`.
+The `extraOptions` is a list of strings that get passed to ssh as additional
+arguments.  The `sudo` attribute is a boolean and if set to true, then it's
+possible to to deploy to targets that disallow sshing in as root, but allow
+(preferably passwordless) sudo.
+Example:
 
 ```nix
 pkgs.krops.writeDeploy "deploy" {
   source = /* ... */;
   target = lib.mkTarget "user@host/path" // {
+    extraOptions = [
+      "-oLogLevel=DEBUG"
+    ];
     sudo = true;
   };
 }
