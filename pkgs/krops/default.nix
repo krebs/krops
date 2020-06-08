@@ -18,15 +18,18 @@ in
     }";
 
   remoteCommand = target: command:
-    writers.writeDash "build.${target.host}" ''
-      exec ${openssh}/bin/ssh ${lib.escapeShellArgs (lib.flatten [
-        (lib.optionals (target.user != "") ["-l" target.user])
-        "-p" target.port
-        "-t"
-        target.extraOptions
-        target.host
-        (if target.sudo then "sudo ${command}" else command)])}
-    '';
+    if lib.isLocalTarget target
+      then command
+      else
+        writers.writeDash "build.${target.host}" ''
+          exec ${openssh}/bin/ssh ${lib.escapeShellArgs (lib.flatten [
+            (lib.optionals (target.user != "") ["-l" target.user])
+            "-p" target.port
+            "-t"
+            target.extraOptions
+            target.host
+            (if target.sudo then "sudo ${command}" else command)])}
+        '';
 
   writeCommand = name: {
     command ? (targetPath: "echo ${targetPath}"),
