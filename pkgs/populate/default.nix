@@ -6,7 +6,7 @@ with shell;
 let
   check = { force, target }: let
     sentinelFile = "${target.path}/.populate";
-  in shell' target /* sh */ ''
+  in runShell target /* sh */ ''
     ${optionalString force /* sh */ ''
       mkdir -vp ${quote (dirOf sentinelFile)} >&2
       touch ${quote sentinelFile}
@@ -23,7 +23,7 @@ let
   do-backup = { target }: let
     sentinelFile = "${target.path}/.populate";
   in
-    shell' target /* sh */ ''
+    runShell target /* sh */ ''
       if ! test -d ${quote sentinelFile}; then
         >&2 printf 'error" sentinel file is not a directory: %s\n' ${quote (
           optionalString (!isLocalTarget target) "${target.host}:" +
@@ -40,7 +40,7 @@ let
           ${target.path}/.populate/backup/
     '';
 
-  pop.derivation = target: source: shell' target /* sh */ ''
+  pop.derivation = target: source: runShell target /* sh */ ''
     nix-build -E ${quote source.text} -o ${quote target.path} >&2
   '';
 
@@ -50,7 +50,7 @@ let
   in
     rsync' target config (quote source.path);
 
-  pop.git = target: source: shell' target /* sh */ ''
+  pop.git = target: source: runShell target /* sh */ ''
     set -efu
     if ! test -e ${quote target.path}; then
       git clone --recurse-submodules ${quote source.url} ${quote target.path}
@@ -92,7 +92,7 @@ let
 
     if test -e ${quote source.dir}/.git; then
       local_pass_info=${quote source.name}\ $(${git}/bin/git -C ${quote source.dir} log -1 --format=%H ${quote source.name})
-      remote_pass_info=$(${shell' target /* sh */ ''
+      remote_pass_info=$(${runShell target /* sh */ ''
         cat ${quote target.path}/.pass_info || :
       ''})
 
@@ -133,12 +133,12 @@ let
 
   pop.pipe = target: source: /* sh */ ''
     ${quote source.command} | {
-      ${shell' target /* sh */ "cat > ${quote target.path}"}
+      ${runShell target /* sh */ "cat > ${quote target.path}"}
     }
   '';
 
   # TODO rm -fR instead of ln -f?
-  pop.symlink = target: source: shell' target /* sh */ ''
+  pop.symlink = target: source: runShell target /* sh */ ''
     ln -fnsT ${quote source.target} ${quote target.path}
   '';
 
@@ -178,20 +178,19 @@ let
       >&2
   '';
 
-  shell' = target: script:
+  runShell = target: command:
     if isLocalTarget target
-      then script
+      then command
       else
         if target.sudo then /* sh */ ''
-          ${ssh' target} ${quote target.host} ${quote "sudo bash -c ${quote script}"}
+          ${ssh' target} ${quote target.host} ${quote "sudo bash -c ${quote command}"}
         '' else ''
-          ${ssh' target} ${quote target.host} ${quote script}
+          ${ssh' target} ${quote target.host} ${quote command}
         '';
 
   ssh' = target: concatMapStringsSep " " quote (flatten [
     "${openssh}/bin/ssh"
     (optionals (target.user != "") ["-l" target.user])
-    "-o" "ControlPersist=no"
     "-p" target.port
     "-T"
     target.extraOptions

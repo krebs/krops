@@ -5,7 +5,7 @@ in
 { nix, openssh, populate, writers }: rec {
 
   build = target:
-    remoteCommand target (lib.concatStringsSep " " [
+    runShell target (lib.concatStringsSep " " [
       "nix build"
       "-I ${lib.escapeShellArg target.path}"
       "--no-link -f '<nixpkgs/nixos>'"
@@ -13,11 +13,11 @@ in
     ]);
 
   rebuild = args: target:
-    remoteCommand target "nixos-rebuild -I ${lib.escapeShellArg target.path} ${
+    runShell target "nixos-rebuild -I ${lib.escapeShellArg target.path} ${
       lib.concatMapStringsSep " " lib.escapeShellArg args
     }";
 
-  remoteCommand = target: command:
+  runShell = target: command:
     if lib.isLocalTarget target
       then command
       else
@@ -25,7 +25,7 @@ in
           exec ${openssh}/bin/ssh ${lib.escapeShellArgs (lib.flatten [
             (lib.optionals (target.user != "") ["-l" target.user])
             "-p" target.port
-            "-t"
+            "-T"
             target.extraOptions
             target.host
             (if target.sudo then "sudo ${command}" else command)])}
@@ -43,7 +43,7 @@ in
     writers.writeDash name ''
       set -efu
       ${populate { inherit backup force source; target = target'; }}
-      ${remoteCommand target' (command target'.path)}
+      ${runShell target' (command target'.path)}
     '';
 
   writeDeploy = name: {
