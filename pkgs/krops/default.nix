@@ -21,7 +21,7 @@ in
     if lib.isLocalTarget target
       then command
       else
-        writers.writeDash "build.${target.host}" ''
+        writers.writeDash "krops.${target.host}.${lib.firstWord command}" ''
           exec ${openssh}/bin/ssh ${lib.escapeShellArgs (lib.flatten [
             (lib.optionals (target.user != "") ["-l" target.user])
             "-p" target.port
