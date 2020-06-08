@@ -36,6 +36,9 @@ let {
       if lib.length y != 1 then throw "malformed /etc/hostname" else
       lib.elemAt y 0;
 
+    firstWord = s:
+      lib.head (lib.match "^([^[:space:]]*).*" s);
+
     isLocalTarget = let
       origin = lib.mkTarget "";
     in target:
