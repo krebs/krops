@@ -69,7 +69,7 @@ If specified as string, the format could be described as:
 [[USER]@]HOST[:PORT][/SOME/PATH]
 ```
 
-Portions in square brakets are optional.
+Portions in square brackets are optional.
 
 If the `USER` is the empty string, as in e.g. `@somehost`, then the username
 will be obtained by ssh from its configuration files.
