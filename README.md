@@ -52,11 +52,13 @@ in
 ```
 
 and run `$(nix-build --no-out-link krops.nix)` to deploy the target machine.
+krops exports some funtions under `krops.` namely:
 
-Under the hood, this will make the sources available on the target machine
+## writeDeploy
+
+This will make the sources available on the target machine
 below `/var/src`, and execute `nixos-rebuild switch -I /var/src`.
 
-## Deployment Attributes
 
 ### `target`
 
@@ -129,6 +131,60 @@ in a dedicated `nix build` step.
 ### `force` (optional, defaults to false)
 
 Create the sentinel file (`/var/src/.populate`) before syncing the new source.
+
+## writeTest
+
+Very similiar to writeDeploy, but just builds the system on the target without
+activating it.
+
+This basically makes the sources available on the target machine
+below `/var/src`, and executes `NIX_PATH=/var/src nix-build -A system '<nixpkgs/nixos>'`.
+
+### `target`
+
+[see `writeDeploy`](#writeDeploy)
+
+### `backup` (optional, defaults to false)
+
+[see `writeDeploy`](#writeDeploy)
+
+### `force` (optional, defaults to false)
+
+[see `writeDeploy`](#writeDeploy)
+
+## writeCommand
+
+This can be used to run other commands than `nixos-rebuild` or pre/post build hooks.
+
+### `command`
+
+A function which takes the targetPath as an attribute.
+Example to activate/deactivate a swapfile before/after build:
+
+```nix
+pkgs.krops.writeCommand "deploy-with-swap" {
+  source = source;
+  target = "root@YOUR_IP_ADDRESS_OR_HOST_NAME_HERE";
+  command = targetPath: ''
+    swapon /var/swapfile
+    nixos-rebuild -I ${targetPath} switch
+    swapoff /var/swapfile
+  '';
+}
+```
+
+### `target`
+
+[see `writeDeploy`](#writeDeploy)
+
+### `backup` (optional, defaults to false)
+
+[see `writeDeploy`](#writeDeploy)
+
+### `force` (optional, defaults to false)
+
+[see `writeDeploy`](#writeDeploy)
+
 
 ## Source Types
 
