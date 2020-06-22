@@ -18,8 +18,11 @@ in
     }";
 
   runShell = target: command:
-    if lib.isLocalTarget target
-      then command
+    let
+      command' = if target.sudo then "sudo ${command}" else command;
+    in
+      if lib.isLocalTarget target
+      then command'
       else
         writers.writeDash "krops.${target.host}.${lib.firstWord command}" ''
           exec ${openssh}/bin/ssh ${lib.escapeShellArgs (lib.flatten [
@@ -28,7 +31,7 @@ in
             "-T"
             target.extraOptions
             target.host
-            (if target.sudo then "sudo ${command}" else command)])}
+            command'])}
         '';
 
   writeCommand = name: {
