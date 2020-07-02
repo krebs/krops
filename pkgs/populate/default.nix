@@ -53,7 +53,11 @@ let
   pop.git = target: source: runShell target /* sh */ ''
     set -efu
     if ! test -e ${quote target.path}; then
-      git clone --recurse-submodules ${quote source.url} ${quote target.path}
+      ${if source.shallow then /* sh */ ''
+        git init ${quote target.path}
+      '' else /* sh */ ''
+        git clone --recurse-submodules ${quote source.url} ${quote target.path}  
+      ''}
     fi
     cd ${quote target.path}
     if ! url=$(git config remote.origin.url); then
@@ -67,10 +71,18 @@ let
 
     if ! test "$(git log --format=%H -1)" = "$hash"; then
       ${if source.fetchAlways then /* sh */ ''
-        git fetch origin
+        ${if source.shallow then /* sh */ ''
+          git fetch --depth=1 origin "$hash"
+        '' else /* sh */ ''
+          git fetch origin
+        ''}
       '' else /* sh */ ''
         if ! git log -1 "$hash" >/dev/null 2>&1; then
-          git fetch origin
+          ${if source.shallow then /* sh */ ''
+            git fetch --depth=1 origin "$hash"
+          '' else /* sh */ ''
+            git fetch origin
+          ''}
         fi
       ''}
       git reset --hard "$hash" >&2

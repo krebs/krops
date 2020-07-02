@@ -242,6 +242,10 @@ Supported attributes:
 * `clean.exclude` -
   List of patterns that should be excluded from Git cleaning.
 
+* `shallow` (optional)
+  boolean that controls whether only the requested commit ref. should be fetched
+  instead of the whole history, to save disk space and bandwith. Defaults to `false`.
+
 
 ### `pass`
 
