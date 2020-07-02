@@ -140,6 +140,10 @@
         url = lib.mkOption {
           type = lib.types.str; # TODO lib.types.git.url
         };
+        shallow = lib.mkOption {
+          default = false;
+          type = lib.types.bool;
+        };
       };
     };
     pass = lib.types.submodule {
