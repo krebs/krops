@@ -1,3 +1,4 @@
+{ nixpkgsLib }:
 let {
 
   body = lib;
@@ -79,6 +80,6 @@ let {
     types = nixpkgs.lib.types // import ./types { lib = body; };
   };
 
-  nixpkgs.lib = import <nixpkgs/lib>;
+  nixpkgs.lib = nixpkgsLib;
 
 }
