@@ -80,6 +80,8 @@ in
       ] ++ lib.optionals (buildTarget' != target') [
         "--build-host" "${buildTarget'.user}@${buildTarget'.host}"
         "--target-host" "${target'.user}@${target'.host}"
+      ] ++ lib.optionals target'.sudo [
+        "--use-remote-sudo"
       ]) buildTarget'}
     '';
 
