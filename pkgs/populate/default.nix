@@ -119,7 +119,7 @@ let
       rm -fR "$tmp_dir"
     }
 
-    ${findutils}/bin/find ${quote passPrefix} -type f |
+    ${findutils}/bin/find ${quote passPrefix} -type f -follow |
     while read -r gpg_path; do
 
       rel_name=''${gpg_path#${quote passPrefix}}
