@@ -289,8 +289,9 @@ Supported attributes:
 
 ## Communication
 
-Comments, questions, pull-requests, etc. are very welcome, and can be directed
+Comments, questions, pull-requests and patches, etc. are very welcome, and can be directed
 at:
 
 - IRC: #krebs at freenode
 - Mail: [spam@krebsco.de](mailto:spam@krebsco.de)
+- Github: https://github.com/krebs/krops/
