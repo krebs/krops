@@ -1,4 +1,4 @@
-# krops (krebs ops)
+# krops (krebs operations)
 
 krops is a lightweight toolkit to deploy NixOS systems, remotely or locally.
 
