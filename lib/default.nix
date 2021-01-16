@@ -28,13 +28,20 @@ let {
       # This function's return value can be used as pkgs.populate input.
       source: sanitize (eval source).config.source;
 
-    getHostName = let
+    maybeHostName = default: let
       # We're parsing /etc/hostname here because reading
       # /proc/sys/kernel/hostname yields ""
-      y = lib.filter lib.types.label.check (lib.splitString "\n" (lib.readFile /etc/hostname));
+      path = "/etc/hostname";
+      lines = lib.splitString "\n" (lib.readFile path);
+      hostNames = lib.filter lib.types.label.check lines;
     in
-      if lib.length y != 1 then throw "malformed /etc/hostname" else
-      lib.elemAt y 0;
+      if lib.pathExists path then
+        if lib.length hostNames == 1 then
+          lib.head hostNames
+        else
+          lib.trace "malformed ${path}" default
+      else
+        default;
 
     firstWord = s:
       lib.head (lib.match "^([^[:space:]]*).*" s);
@@ -51,7 +58,7 @@ let {
       filterNull = lib.filterAttrs (n: v: v != null);
     in {
       user = lib.getEnv "LOGNAME";
-      host = lib.maybeEnv "HOSTNAME" lib.getHostName;
+      host = lib.maybeEnv "HOSTNAME" (lib.maybeHostName "localhost");
       port = "22";
       path = "/var/src";
       sudo = false;
