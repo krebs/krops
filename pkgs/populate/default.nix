@@ -119,21 +119,25 @@ let
       rm -fR "$tmp_dir"
     }
 
-    ${findutils}/bin/find ${quote passPrefix} -type f -follow |
+    ${findutils}/bin/find ${quote passPrefix} -type f -follow ! -name .gpg-id |
     while read -r gpg_path; do
 
       rel_name=''${gpg_path#${quote passPrefix}}
       rel_name=''${rel_name%.gpg}
 
       pass_date=$(
-        ${git}/bin/git -C ${quote source.dir} log -1 --format=%aI "$gpg_path"
+        if test -e ${quote source.dir}/.git; then
+          ${git}/bin/git -C ${quote source.dir} log -1 --format=%aI "$gpg_path"
+        fi
       )
       pass_name=${quote source.name}/$rel_name
       tmp_path=$tmp_dir/$rel_name
 
       ${coreutils}/bin/mkdir -p "$(${coreutils}/bin/dirname "$tmp_path")"
       PASSWORD_STORE_DIR=${quote source.dir} ${pass}/bin/pass show "$pass_name" > "$tmp_path"
-      ${coreutils}/bin/touch -d "$pass_date" "$tmp_path"
+      if [ -n "$pass_date" ]; then
+        ${coreutils}/bin/touch -d "$pass_date" "$tmp_path"
+      fi
     done
 
     if test -n "''${local_pass_info-}"; then

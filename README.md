@@ -89,7 +89,7 @@ pkgs.krops.writeDeploy "deploy" {
   source = /* ... */;
   target = lib.mkTarget "user@host/path" // {
     extraOptions = [
-      "-oLogLevel=DEBUG"
+      "-o" "LogLevel=DEBUG"
     ];
     sudo = true;
   };
