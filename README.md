@@ -185,6 +185,10 @@ pkgs.krops.writeCommand "deploy-with-swap" {
 
 [see `writeDeploy`](#writeDeploy)
 
+### `allocateTTY` (optional, defaults to false)
+
+whether the ssh session should do a pseudo-terminal allocation.
+sets `-t` on the ssh command.
 
 ## Source Types
 

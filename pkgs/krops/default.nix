@@ -5,11 +5,13 @@ in
 { nix, openssh, populate, writers }: rec {
 
   rebuild = args: target:
-    runShell target "nixos-rebuild -I ${lib.escapeShellArg target.path} ${
+    runShell target {} "nixos-rebuild -I ${lib.escapeShellArg target.path} ${
       lib.concatMapStringsSep " " lib.escapeShellArg args
     }";
 
-  runShell = target: command:
+  runShell = target: {
+    allocateTTY ? false
+  }: command:
     let
       command' = if target.sudo then "sudo ${command}" else command;
     in
@@ -20,7 +22,7 @@ in
           exec ${openssh}/bin/ssh ${lib.escapeShellArgs (lib.flatten [
             (lib.optionals (target.user != "") ["-l" target.user])
             "-p" target.port
-            "-T"
+            (if allocateTTY then "-t" else "-T")
             target.extraOptions
             target.host
             command'])}
@@ -30,6 +32,7 @@ in
     command ? (targetPath: "echo ${targetPath}"),
     backup ? false,
     force ? false,
+    allocateTTY ? false,
     source,
     target
   }: let
@@ -38,7 +41,7 @@ in
     writers.writeDash name ''
       set -efu
       ${populate { inherit backup force source; target = target'; }}
-      ${runShell target' (command target'.path)}
+      ${runShell target' { inherit allocateTTY; } (command target'.path)}
     '';
 
   writeDeploy = name: {
