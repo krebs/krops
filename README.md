@@ -292,6 +292,6 @@ Supported attributes:
 Comments, questions, pull-requests and patches, etc. are very welcome, and can be directed
 at:
 
-- IRC: #krebs at freenode
+- IRC: #krebs at hackint
 - Mail: [spam@krebsco.de](mailto:spam@krebsco.de)
 - Github: https://github.com/krebs/krops/
