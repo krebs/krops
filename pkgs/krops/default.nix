@@ -4,14 +4,6 @@ in
 
 { nix, openssh, populate, writers }: rec {
 
-  build = target:
-    runShell target (lib.concatStringsSep " " [
-      "nix build"
-      "-I ${lib.escapeShellArg target.path}"
-      "--no-link -f '<nixpkgs/nixos>'"
-      "config.system.build.toplevel"
-    ]);
-
   rebuild = args: target:
     runShell target "nixos-rebuild -I ${lib.escapeShellArg target.path} ${
       lib.concatMapStringsSep " " lib.escapeShellArg args
@@ -53,7 +45,7 @@ in
     backup ? false,
     buildTarget ? null,
     crossDeploy ? false,
-    fast ? false,
+    fast ? null,
     force ? false,
     source,
     target
@@ -64,26 +56,24 @@ in
         else lib.mkTarget buildTarget;
     target' = lib.mkTarget target;
   in
-    writers.writeDash name ''
-      set -efu
-      ${lib.optionalString (buildTarget' != target')
-        (populate { inherit backup force source; target = buildTarget'; })}
-      ${populate { inherit backup force source; target = target'; }}
-      ${lib.optionalString (! fast) ''
-        ${rebuild ["dry-build"] buildTarget'}
-        ${build buildTarget'}
-      ''}
-      ${rebuild ([
-        "switch"
-      ] ++ lib.optionals crossDeploy [
-        "--no-build-nix"
-      ] ++ lib.optionals (buildTarget' != target') [
-        "--build-host" "${buildTarget'.user}@${buildTarget'.host}"
-        "--target-host" "${target'.user}@${target'.host}"
-      ] ++ lib.optionals target'.sudo [
-        "--use-remote-sudo"
-      ]) buildTarget'}
-    '';
+    lib.traceIf (fast != null) "writeDeploy: it's now always fast, setting the `fast` attribute is deprecated and will be removed in future" (
+      writers.writeDash name ''
+        set -efu
+        ${lib.optionalString (buildTarget' != target')
+          (populate { inherit backup force source; target = buildTarget'; })}
+        ${populate { inherit backup force source; target = target'; }}
+        ${rebuild ([
+          "switch"
+        ] ++ lib.optionals crossDeploy [
+          "--no-build-nix"
+        ] ++ lib.optionals (buildTarget' != target') [
+          "--build-host" "${buildTarget'.user}@${buildTarget'.host}"
+          "--target-host" "${target'.user}@${target'.host}"
+        ] ++ lib.optionals target'.sudo [
+          "--use-remote-sudo"
+        ]) buildTarget'}
+      ''
+    );
 
   writeTest = name: {
     backup ? false,
