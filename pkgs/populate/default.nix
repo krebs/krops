@@ -45,8 +45,8 @@ let
   '';
 
   pop.file = target: source: let
-    configAttrs = ["useChecksum" "exclude" "filters" "deleteExcluded"];
-    config = filterAttrs (name: _: elem name configAttrs) source;
+    config = rsyncDefaultConfig // sourceConfig;
+    sourceConfig = getAttrs (attrNames rsyncDefaultConfig) source;
   in
     rsync' target config (quote source.path);
 
@@ -144,7 +144,7 @@ let
       echo "$local_pass_info" > "$tmp_dir"/.pass_info
     fi
 
-    ${rsync' target {} /* sh */ "$tmp_dir"}
+    ${rsync' target rsyncDefaultConfig /* sh */ "$tmp_dir"}
   '';
 
   pop.pipe = target: source: /* sh */ ''
@@ -172,17 +172,17 @@ let
       source_path=$source_path/
     fi
     ${rsync}/bin/rsync \
-        ${optionalString (config.useChecksum or false) /* sh */ "--checksum"} \
+        ${optionalString config.useChecksum /* sh */ "--checksum"} \
         ${optionalString target.sudo /* sh */ "--rsync-path=\"sudo rsync\""} \
         ${concatMapStringsSep " "
           (pattern: /* sh */ "--exclude ${quote pattern}")
-          (config.exclude or [])} \
+          config.exclude} \
         ${concatMapStringsSep " "
           (filter: /* sh */ "--${filter.type} ${quote filter.pattern}")
-          (config.filters or [])} \
+          config.filters} \
         -e ${quote (ssh' target)} \
         -vFrlptD \
-        ${optionalString (config.deleteExcluded or true) /* sh */ "--delete-excluded"} \
+        ${optionalString config.deleteExcluded /* sh */ "--delete-excluded"} \
         "$source_path" \
         ${quote (
           optionalString (!isLocalTarget target) (
@@ -193,6 +193,13 @@ let
         )} \
       >&2
   '';
+
+  rsyncDefaultConfig = {
+    useChecksum = false;
+    exclude = [];
+    filters = [];
+    deleteExcluded = true
+  };
 
   runShell = target: command:
     if isLocalTarget target
