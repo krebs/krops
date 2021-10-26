@@ -210,7 +210,7 @@ using [`rsync`](https://rsync.samba.org/).
 Supported attributes:
 
 * `path` -
-  absolute path to files that should by transfered
+  absolute path to files that should by transferred.
 
 * `useChecksum` (optional) -
   boolean that controls whether file contents should be checked to decide
