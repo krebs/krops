@@ -48,14 +48,14 @@ let
     config = rsyncDefaultConfig // derivedConfig // sourceConfig;
     derivedConfig = {
       useChecksum =
-        if isDerivation source.path
+        if isStorePath source.path
           then true
           else rsyncDefaultConfig.useChecksum;
     };
     sourceConfig =
       filterAttrs (name: _: elem name (attrNames rsyncDefaultConfig)) source;
     sourcePath =
-      if isDerivation source.path
+      if isStorePath source.path
         then quote (toString source.path)
         else quote source.path;
   in
