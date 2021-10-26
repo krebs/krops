@@ -45,10 +45,21 @@ let
   '';
 
   pop.file = target: source: let
-    config = rsyncDefaultConfig // sourceConfig;
-    sourceConfig = getAttrs (attrNames rsyncDefaultConfig) source;
+    config = rsyncDefaultConfig // derivedConfig // sourceConfig;
+    derivedConfig = {
+      useChecksum =
+        if isDerivation source.path
+          then true
+          else rsyncDefaultConfig.useChecksum;
+    };
+    sourceConfig =
+      filterAttrs (name: _: elem name (attrNames rsyncDefaultConfig)) source;
+    sourcePath =
+      if isDerivation source.path
+        then quote (toString source.path)
+        else quote source.path;
   in
-    rsync' target config (quote source.path);
+    rsync' target config sourcePath;
 
   pop.git = target: source: runShell target /* sh */ ''
     set -efu
@@ -198,7 +209,7 @@ let
     useChecksum = false;
     exclude = [];
     filters = [];
-    deleteExcluded = true
+    deleteExcluded = true;
   };
 
   runShell = target: command:

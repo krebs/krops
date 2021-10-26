@@ -217,6 +217,8 @@ Supported attributes:
   whether a file has changed.  This is useful when `path` points at files
   with mangled timestamps, e.g. the Nix store.
 
+  The default value is `true` if `path` is a derivation, and `false` otherwise.
+
 * `filters` (optional)
   List of filters that should be passed to [`rsync`](https://rsync.samba.org/).
   Filters are specified as attribute sets with the attributes `type` and

@@ -5,7 +5,7 @@ let
   pkgs = import "${krops}/pkgs" {};
 
   source = lib.evalSource [{
-    nixos-config.file = toString (pkgs.writeText "nixos-config" ''
+    nixos-config.file = pkgs.writeText "nixos-config" ''
       { pkgs, ... }: {
 
         fileSystems."/" = { device = "/dev/sda1"; };
@@ -13,7 +13,7 @@ let
         services.openssh.enable = true;
         environment.systemPackages = [ pkgs.git ];
       }
-    '');
+    '';
     nixpkgs.symlink = toString <nixpkgs>;
   }];
 in {
