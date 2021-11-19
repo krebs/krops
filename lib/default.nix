@@ -57,9 +57,9 @@ let {
       elemAt' = xs: i: if lib.length xs > i then lib.elemAt xs i else null;
       filterNull = lib.filterAttrs (n: v: v != null);
     in {
-      user = lib.getEnv "LOGNAME";
+      user = lib.maybeEnv "LOGNAME" null;
       host = lib.maybeEnv "HOSTNAME" (lib.maybeHostName "localhost");
-      port = "22";
+      port = null;
       path = "/var/src";
       sudo = false;
       extraOptions = [];
@@ -69,6 +69,10 @@ let {
       port = elemAt' parse 5;
       path = elemAt' parse 6;
     } else s);
+
+    mkUserPortSSHOpts = target:
+      (lib.optionals (target.user != null) ["-l" target.user]) ++
+      (lib.optionals (target.port != null) ["-p" target.port]);
 
     shell = let
       isSafeChar = lib.testString "[-+./0-9:=A-Z_a-z]";

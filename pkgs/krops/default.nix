@@ -20,8 +20,7 @@ in
       else
         writers.writeDash "krops.${target.host}.${lib.firstWord command}" ''
           exec ${openssh}/bin/ssh ${lib.escapeShellArgs (lib.flatten [
-            (lib.optionals (target.user != "") ["-l" target.user])
-            "-p" target.port
+            (lib.mkUserPortSSHOpts target)
             (if allocateTTY then "-t" else "-T")
             target.extraOptions
             target.host

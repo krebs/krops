@@ -224,8 +224,7 @@ let
 
   ssh' = target: concatMapStringsSep " " quote (flatten [
     "${openssh}/bin/ssh"
-    (optionals (target.user != "") ["-l" target.user])
-    "-p" target.port
+    (mkUserPortSSHOpts target)
     "-T"
     target.extraOptions
   ]);
