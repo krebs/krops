@@ -6,7 +6,7 @@ krops is a lightweight toolkit to deploy NixOS systems, remotely or locally.
 ## Some Features
 
 - store your secrets in [password store](https://www.passwordstore.org/)
-- build your system remotely
+- build your systems remotely
 - minimal overhead (it's basically just `nixos-rebuild switch`!)
 - run from custom nixpkgs branch/checkout/fork
 
@@ -19,8 +19,8 @@ Create a file named `krops.nix` (name doesn't matter) with following content:
 let
   krops = (import <nixpkgs> {}).fetchgit {
     url = https://cgit.krebsco.de/krops/;
-    rev = "v1.17.0";
-    sha256 = "150jlz0hlb3ngf9a1c9xgcwzz1zz8v2lfgnzw08l3ajlaaai8smd";
+    rev = "v1.25.0";
+    sha256 = "07mg3iaqjf1w49vmwfchi7b1w55bh7rvsbgicp2m47gnj9alwdb6";
   };
 
   lib = import "${krops}/lib";
@@ -185,6 +185,10 @@ pkgs.krops.writeCommand "deploy-with-swap" {
 
 [see `writeDeploy`](#writeDeploy)
 
+### `allocateTTY` (optional, defaults to false)
+
+whether the ssh session should do a pseudo-terminal allocation.
+sets `-t` on the ssh command.
 
 ## Source Types
 
@@ -206,12 +210,14 @@ using [`rsync`](https://rsync.samba.org/).
 Supported attributes:
 
 * `path` -
-  absolute path to files that should by transfered
+  absolute path to files that should by transferred.
 
 * `useChecksum` (optional) -
   boolean that controls whether file contents should be checked to decide
   whether a file has changed.  This is useful when `path` points at files
   with mangled timestamps, e.g. the Nix store.
+
+  The default value is `true` if `path` is a derivation, and `false` otherwise.
 
 * `filters` (optional)
   List of filters that should be passed to [`rsync`](https://rsync.samba.org/).

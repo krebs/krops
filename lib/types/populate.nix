@@ -21,11 +21,15 @@
       };
       file = lib.mkOption {
         apply = x:
-          if lib.types.absolute-pathname.check x
+          if lib.types.absolute-pathname.check x || lib.types.package.check x
             then { path = x; }
             else x;
         default = null;
-        type = lib.types.nullOr (lib.types.either lib.types.absolute-pathname source-types.file);
+        type = lib.types.nullOr (lib.types.oneOf [
+          lib.types.absolute-pathname
+          lib.types.package
+          source-types.file
+        ]);
       };
       git = lib.mkOption {
         default = null;
