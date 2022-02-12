@@ -63,6 +63,11 @@ let
 
   pop.git = target: source: runShell target /* sh */ ''
     set -efu
+    # Remove target path if it doesn't look like a git worktree.
+    # This can happen e.g. when it had a different type earlier.
+    if ! test -e ${quote target.path}/.git; then
+      rm -fR ${quote target.path}
+    fi
     if ! test -e ${quote target.path}; then
       ${if source.shallow then /* sh */ ''
         git init ${quote target.path}
