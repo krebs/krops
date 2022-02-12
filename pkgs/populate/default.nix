@@ -72,7 +72,7 @@ let
       ${if source.shallow then /* sh */ ''
         git init ${quote target.path}
       '' else /* sh */ ''
-        git clone --recurse-submodules ${quote source.url} ${quote target.path}  
+        git clone --recurse-submodules ${quote source.url} ${quote target.path}
       ''}
     fi
     cd ${quote target.path}
