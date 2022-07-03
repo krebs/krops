@@ -24,7 +24,7 @@ in
             (if allocateTTY then "-t" else "-T")
             target.extraOptions
             target.host
-            command'])}
+            command'])} "$@"
         '';
 
   writeCommand = name: {
@@ -40,7 +40,7 @@ in
     writers.writeDash name ''
       set -efu
       ${populate { inherit backup force source; target = target'; }}
-      ${runShell target' { inherit allocateTTY; } (command target'.path)}
+      ${runShell target' { inherit allocateTTY; } (command target'.path)} "$@"
     '';
 
   writeDeploy = name: {
@@ -65,7 +65,6 @@ in
           (populate { inherit backup force source; target = buildTarget'; })}
         ${populate { inherit backup force source; target = target'; }}
         ${rebuild ([
-          "switch"
         ] ++ lib.optionals crossDeploy [
           "--no-build-nix"
         ] ++ lib.optionals (buildTarget' != target') [
@@ -73,7 +72,7 @@ in
           "--target-host" "${target'.user}@${target'.host}"
         ] ++ lib.optionals target'.sudo [
           "--use-remote-sudo"
-        ]) buildTarget'}
+        ]) buildTarget'} "''${@:-switch}"
       ''
     );
 
