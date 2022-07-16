@@ -49,6 +49,7 @@ in
     crossDeploy ? false,
     fast ? null,
     force ? false,
+    operation ? "switch",
     source,
     target
   }: let
@@ -65,7 +66,7 @@ in
           (populate { inherit backup force source; target = buildTarget'; })}
         ${populate { inherit backup force source; target = target'; }}
         ${rebuild ([
-          "switch"
+          operation
         ] ++ lib.optionals crossDeploy [
           "--no-build-nix"
         ] ++ lib.optionals (buildTarget' != target') [
