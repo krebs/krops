@@ -82,7 +82,8 @@ in
     backup ? false,
     force ? false,
     source,
-    target
+    target,
+    trace ? false
   }: let
     target' = lib.mkTarget target;
   in
@@ -95,7 +96,7 @@ in
           -A system \
           --keep-going \
           --no-out-link \
-          --show-trace \
+          ${lib.optionalString trace "--show-trace"} \
           '<nixpkgs/nixos>'
     '';
 }

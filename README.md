@@ -156,6 +156,10 @@ below `/var/src`, and executes `NIX_PATH=/var/src nix-build -A system '<nixpkgs/
 
 [see `writeDeploy`](#writeDeploy)
 
+### `trace` (optional, defaults to false)
+
+run nix-build with `--show-trace`
+
 ## writeCommand
 
 This can be used to run other commands than `nixos-rebuild` or pre/post build hooks.
