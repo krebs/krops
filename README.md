@@ -136,6 +136,29 @@ Create the sentinel file (`/var/src/.populate`) before syncing the new source.
 
 Specifies which `nixos-rebuild` operation to perform.
 
+### `useNixOutputMonitor` (optional, defaults to `"opportunistic"`)
+
+Specifies when to pipe `nixos-rebuild`'s output to
+[nom](https://github.com/maralorn/nix-output-monitor).
+
+Supported values:
+
+* `"opportunistic"` (default) -
+  Use `nom` only if it is present on the target machine.
+
+* `"optimistic"` -
+  Use `nom`, assuming it is present on the target machine.
+
+* `"pessimistic"` -
+  Use `nom` via `nix-shell` on the target machine.
+
+* `true` -
+  Use `nom`.
+  If it is not present on the target machine, then use it via `nix-shell`.
+
+* `false` -
+  Don't use `nom`
+
 ## writeTest
 
 Very similiar to writeDeploy, but just builds the system on the target without

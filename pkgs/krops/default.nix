@@ -4,10 +4,16 @@ in
 
 { nix, openssh, populate, writers }: rec {
 
-  rebuild = args: target:
-    runShell target {} "nixos-rebuild -I ${lib.escapeShellArg target.path} ${
-      lib.concatMapStringsSep " " lib.escapeShellArg args
-    }";
+  rebuild = {
+    useNixOutputMonitor
+  }:
+  args: target:
+    runShell target {}
+      (withNixOutputMonitor useNixOutputMonitor /* sh */ ''
+        nixos-rebuild -I ${
+          lib.concatMapStringsSep " " lib.escapeShellArg ([target.path] ++ args)
+        }
+      '');
 
   runShell = target: {
     allocateTTY ? false
@@ -24,8 +30,42 @@ in
             (if allocateTTY then "-t" else "-T")
             target.extraOptions
             target.host
-            command'])}
+            command'
+          ])}
         '';
+
+  withNixOutputMonitor = mode_: command: let
+    mode =
+      lib.getAttr (lib.typeOf mode_)  {
+        bool = lib.toJSON mode_;
+        string = mode_;
+      };
+  in /* sh */ ''
+    printf '# use nix-output-monitor: %s\n' ${lib.escapeShellArg mode} >&2
+    ${lib.getAttr mode rec {
+      opportunistic = /* sh */ ''
+        if command -v nom >/dev/null; then
+          ${optimistic}
+        else
+          ${false}
+        fi
+      '';
+      optimistic = /* sh */ ''
+        (${command}) 2>&1 | nom
+      '';
+      pessimistic = /* sh */ ''
+        nix-shell -p nix-output-monitor --run ${lib.escapeShellArg optimistic}
+      '';
+      true = /* sh */ ''
+        if command -v nom >/dev/null; then
+          ${optimistic}
+        else
+          ${pessimistic}
+        fi
+      '';
+      false = command;
+    }}
+  '';
 
   writeCommand = name: {
     command ? (targetPath: "echo ${targetPath}"),
@@ -51,7 +91,8 @@ in
     force ? false,
     operation ? "switch",
     source,
-    target
+    target,
+    useNixOutputMonitor ? "opportunistic"
   }: let
     buildTarget' =
       if buildTarget == null
@@ -65,7 +106,7 @@ in
         ${lib.optionalString (buildTarget' != target')
           (populate { inherit backup force source; target = buildTarget'; })}
         ${populate { inherit backup force source; target = target'; }}
-        ${rebuild ([
+        ${rebuild { inherit useNixOutputMonitor; } ([
           operation
         ] ++ lib.optionals crossDeploy [
           "--no-build-nix"
