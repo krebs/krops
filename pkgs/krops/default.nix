@@ -9,7 +9,7 @@ in
   }:
   args: target:
     runShell target {}
-      (withNixOutputMonitor useNixOutputMonitor /* sh */ ''
+      (withNixOutputMonitor target useNixOutputMonitor /* sh */ ''
         nixos-rebuild -I ${
           lib.concatMapStringsSep " " lib.escapeShellArg ([target.path] ++ args)
         }
@@ -37,7 +37,7 @@ in
           ])}
         '';
 
-  withNixOutputMonitor = mode_: command: let
+  withNixOutputMonitor = target: mode_: command: let
     mode =
       lib.getAttr (lib.typeOf mode_)  {
         bool = lib.toJSON mode_;
@@ -57,6 +57,7 @@ in
         (${command}) 2>&1 | nom
       '';
       pessimistic = /* sh */ ''
+        NIX_PATH=${lib.escapeShellArg target.path} \
         nix-shell -p nix-output-monitor --run ${lib.escapeShellArg optimistic}
       '';
       true = /* sh */ ''
