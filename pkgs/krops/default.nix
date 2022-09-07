@@ -19,7 +19,10 @@ in
     allocateTTY ? false
   }: command:
     let
-      command' = if target.sudo then "sudo ${command}" else command;
+      command' = /* sh */ ''
+        ${lib.optionalString target.sudo "sudo"} \
+        /bin/sh -c ${lib.escapeShellArg command}
+      '';
     in
       if lib.isLocalTarget target
       then command'
