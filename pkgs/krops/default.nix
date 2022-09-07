@@ -10,9 +10,8 @@ in
   args: target:
     runShell target {}
       (withNixOutputMonitor target useNixOutputMonitor /* sh */ ''
-        nixos-rebuild -I ${
-          lib.concatMapStringsSep " " lib.escapeShellArg ([target.path] ++ args)
-        }
+        NIX_PATH=${lib.escapeShellArg target.path} \
+        nixos-rebuild ${lib.escapeShellArgs args}
       '');
 
   runShell = target: {
