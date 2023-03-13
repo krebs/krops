@@ -119,7 +119,15 @@ let
     umask 0077
 
     if test -e ${quote source.dir}/.git; then
-      local_pass_info=${quote source.name}\ $(${git}/bin/git -C ${quote source.dir} log -1 --format=%H ${quote source.name})
+      local_pass_info=${quote source.name}\ $(
+        ${git}/bin/git -C ${quote source.dir} log -1 --format=%H ${quote source.name}
+        # we append a hash for every symlink, otherwise we would miss updates on
+        # files where the symlink points to
+        ${findutils}/bin/find ${quote source.dir}/${quote source.name} -type l \
+            -exec ${coreutils}/bin/realpath {} + |
+          ${coreutils}/bin/sort |
+          ${findutils}/bin/xargs -r -n 1 ${git}/bin/git -C ${quote source.dir} log -1 --format=%H
+      )
       remote_pass_info=$(${runShell target /* sh */ ''
         cat ${quote target.path}/.pass_info || :
       ''})
