@@ -96,7 +96,7 @@ pkgs.krops.writeDeploy "deploy" {
 }
 ```
 For more details about the `target` attribute, please check the `mkTarget`
-function in [lib/default.nix](lib/defaults.nix).
+function in [lib/default.nix](lib/default.nix).
 
 ### `backup` (optional, defaults to false)
 
