@@ -1,8 +1,4 @@
-let
-  lib = import ../../lib;
-in
-
-{ nix, openssh, populate, writers }: rec {
+{ nix, openssh, populate, writers, lib }: rec {
 
   rebuild = {
     useNixOutputMonitor
