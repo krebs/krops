@@ -39,6 +39,17 @@
         default = null;
         type = lib.types.nullOr source-types.pass;
       };
+      passage = lib.mkOption {
+        apply = x:
+          if lib.types.pathname.check x
+            then { dir = x; }
+            else x;
+        default = null;
+        type = lib.types.nullOr (lib.types.oneOf [
+          lib.types.pathname
+          source-types.passage
+        ]);
+      };
       pipe = lib.mkOption {
         apply = x:
           if lib.types.absolute-pathname.check x
@@ -157,6 +168,21 @@
         };
         name = lib.mkOption {
           type = lib.types.pathname; # TODO relative-pathname
+        };
+      };
+    };
+    passage = lib.types.submodule {
+      options = {
+        age = lib.mkOption {
+          default = "age";
+          type = lib.types.pathname;
+        };
+        dir = lib.mkOption {
+          type = lib.types.pathname;
+        };
+        identities_file = lib.mkOption {
+          default = toString ~/.passage/identities;
+          type = lib.types.pathname;
         };
       };
     };

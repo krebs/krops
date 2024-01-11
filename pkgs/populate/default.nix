@@ -1,7 +1,7 @@
 with import ../../lib;
 with shell;
 
-{ coreutils, dash, findutils, git, jq, openssh, pass, rsync, writers }:
+{ coreutils, dash, findutils, git, jq, openssh, pass, passage, rsync, writers }:
 
 let
   check = { force, target }: let
@@ -167,6 +167,37 @@ let
     if test -n "''${local_pass_info-}"; then
       echo "$local_pass_info" > "$tmp_dir"/.pass_info
     fi
+
+    ${rsync' target rsyncDefaultConfig /* sh */ "$tmp_dir"}
+  '';
+
+  pop.passage = target: source: /* sh */ ''
+    set -efu
+
+    export PASSAGE_AGE=${quote source.age}
+    export PASSAGE_DIR=${quote source.dir}
+    export PASSAGE_IDENTITIES_FILE=${quote source.identities_file}
+
+    umask 0077
+
+    tmp_dir=$(${coreutils}/bin/mktemp -dt populate-passage.XXXXXXXX)
+    trap cleanup EXIT
+    cleanup() {
+      rm -fR "$tmp_dir"
+    }
+
+    ${findutils}/bin/find "$PASSAGE_DIR" -type f -name \*.age -follow |
+    while read -r age_path; do
+
+      rel_name=''${age_path#$PASSAGE_DIR}
+      rel_name=''${rel_name%.age}
+
+      tmp_path=$tmp_dir/$rel_name
+
+      ${coreutils}/bin/mkdir -p "$(${coreutils}/bin/dirname "$tmp_path")"
+      ${passage}/bin/passage show "$rel_name" > "$tmp_path"
+      ${coreutils}/bin/touch -r "$age_path" "$tmp_path"
+    done
 
     ${rsync' target rsyncDefaultConfig /* sh */ "$tmp_dir"}
   '';

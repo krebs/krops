@@ -6,6 +6,7 @@ krops is a lightweight toolkit to deploy NixOS systems, remotely or locally.
 ## Some Features
 
 - store your secrets in [password store](https://www.passwordstore.org/)
+                     or [passage](https://github.com/FiloSottile/passage)
 - build your systems remotely
 - minimal overhead (it's basically just `nixos-rebuild switch`!)
 - run from custom nixpkgs branch/checkout/fork
@@ -296,6 +297,29 @@ Supported attributes:
 
 * `name` -
   sub-directory in the password store.
+
+
+### `passage`
+
+The passage source type decrypts files from a local
+[passage store](https://github.com/FiloSottile/passage)
+and transfers them to the target using
+[`rsync`](https://rsync.samba.org/).
+
+Supported attributes:
+
+* `dir` -
+  Path to the passage store.
+  For a partial transfer, this may point to a subdirectory.
+  Example: `~/.passage/store/hosts/MYHOSTNAME`
+
+* `identities_file` (optional) -
+  Path to the identities file.
+  Defaults to `~/.passage/identities`.
+
+* `age` (optional) -
+  Path of the age binary.
+  Defaults to `age` (absolute path gets resolved using `passage`'s search path.)
 
 
 ### `pipe`
