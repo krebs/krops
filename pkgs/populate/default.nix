@@ -189,14 +189,15 @@ let
     ${findutils}/bin/find "$PASSAGE_DIR" -type f -name \*.age -follow |
     while read -r age_path; do
 
-      rel_name=''${age_path#$PASSAGE_DIR}
-      rel_name=''${rel_name%.age}
+      pass_name=''${age_path#$PASSAGE_DIR/}
+      pass_name=''${pass_name%.age}
 
-      tmp_path=$tmp_dir/$rel_name
+      out=$tmp_dir/$pass_name
 
-      ${coreutils}/bin/mkdir -p "$(${coreutils}/bin/dirname "$tmp_path")"
-      ${passage}/bin/passage show "$rel_name" > "$tmp_path"
-      ${coreutils}/bin/touch -r "$age_path" "$tmp_path"
+      ${coreutils}/bin/mkdir -p "$(${coreutils}/bin/dirname "$out")"
+      ${passage}/bin/passage show "$pass_name" > "$out"
+
+      ${coreutils}/bin/touch -r "$age_path" "$out"
     done
 
     ${rsync' target rsyncDefaultConfig /* sh */ "$tmp_dir"}
