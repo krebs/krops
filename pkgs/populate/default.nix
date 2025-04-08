@@ -236,7 +236,8 @@ let
           (filter: /* sh */ "--${filter.type} ${quote filter.pattern}")
           config.filters} \
         -e ${quote (ssh' target)} \
-        -vFrlptD \
+        --info=backup,del,copy,misc,mount,name,nonreg,remove,skip,symsafe \
+        -FrlptD \
         ${optionalString config.deleteExcluded /* sh */ "--delete-excluded"} \
         "$source_path" \
         ${quote (
