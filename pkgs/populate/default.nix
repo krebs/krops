@@ -155,12 +155,12 @@ let
         fi
       )
       pass_name=${quote source.name}/$rel_name
-      tmp_path=$tmp_dir/$rel_name
+      pass_out=$tmp_dir/$rel_name
 
-      ${coreutils}/bin/mkdir -p "$(${coreutils}/bin/dirname "$tmp_path")"
-      PASSWORD_STORE_DIR=${quote source.dir} ${pass}/bin/pass show "$pass_name" > "$tmp_path"
+      ${coreutils}/bin/mkdir -p "$(${coreutils}/bin/dirname "$pass_out")"
+      PASSWORD_STORE_DIR=${quote source.dir} ${pass}/bin/pass show "$pass_name" > "$pass_out"
       if [ -n "$pass_date" ]; then
-        ${coreutils}/bin/touch -d "$pass_date" "$tmp_path"
+        ${coreutils}/bin/touch -d "$pass_date" "$pass_out"
       fi
     done
 
@@ -168,7 +168,7 @@ let
       echo "$local_pass_info" > "$tmp_dir"/.pass_info
     fi
 
-    ${rsync' target rsyncDefaultConfig /* sh */ "$tmp_dir"}
+    ${rsync' target rsyncDefaultConfig /* sh */ "$WORKDIR"}
   '';
 
   pop.passage = target: source: /* sh */ ''
@@ -192,12 +192,12 @@ let
       pass_name=''${age_path#$PASSAGE_DIR/}
       pass_name=''${pass_name%.age}
 
-      out=$tmp_dir/$pass_name
+      pass_out=$tmp_dir/$pass_name
 
-      ${coreutils}/bin/mkdir -p "$(${coreutils}/bin/dirname "$out")"
-      ${passage}/bin/passage show "$pass_name" > "$out"
+      ${coreutils}/bin/mkdir -p "$(${coreutils}/bin/dirname "$pass_out")"
+      ${passage}/bin/passage show "$pass_name" > "$pass_out"
 
-      ${coreutils}/bin/touch -r "$age_path" "$out"
+      ${coreutils}/bin/touch -r "$age_path" "$pass_out"
     done
 
     ${rsync' target rsyncDefaultConfig /* sh */ "$tmp_dir"}
