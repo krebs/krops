@@ -204,9 +204,17 @@ let
   '';
 
   pop.pipe = target: source: /* sh */ ''
-    ${quote source.command} | {
-      ${runShell target /* sh */ "cat > ${quote target.path}"}
+    tmp_dir=$(${coreutils}/bin/mktemp -dt populate-pipe.XXXXXXXX)
+    trap cleanup EXIT
+    cleanup() {
+      rm -fR "$tmp_dir"
     }
+    out=$tmp_dir/out
+
+    ${quote source.command} > "$out"
+    ${coreutils}/bin/touch -t 300001010000 "$out"
+
+    ${rsync' target rsyncDefaultConfig /* sh */ "$out"}
   '';
 
   # TODO rm -fR instead of ln -f?
