@@ -117,6 +117,7 @@ let
     set -efu
 
     umask 0077
+    chmod 0700 "$PWD"
 
     if test -e ${quote source.dir}/.git; then
       local_pass_info=${quote source.name}\ $(
@@ -137,12 +138,6 @@ let
       fi
     fi
 
-    tmp_dir=$(${coreutils}/bin/mktemp -dt populate-pass.XXXXXXXX)
-    trap cleanup EXIT
-    cleanup() {
-      rm -fR "$tmp_dir"
-    }
-
     ${findutils}/bin/find ${quote passPrefix} -type f -follow ! -name .gpg-id |
     while read -r gpg_path; do
 
@@ -155,7 +150,7 @@ let
         fi
       )
       pass_name=${quote source.name}/$rel_name
-      pass_out=$tmp_dir/$rel_name
+      pass_out=$PWD/$rel_name
 
       ${coreutils}/bin/mkdir -p "$(${coreutils}/bin/dirname "$pass_out")"
       PASSWORD_STORE_DIR=${quote source.dir} ${pass}/bin/pass show "$pass_name" > "$pass_out"
@@ -165,10 +160,10 @@ let
     done
 
     if test -n "''${local_pass_info-}"; then
-      echo "$local_pass_info" > "$tmp_dir"/.pass_info
+      echo "$local_pass_info" > "$PWD"/.pass_info
     fi
 
-    ${rsync' target rsyncDefaultConfig /* sh */ "$WORKDIR"}
+    ${rsync' target rsyncDefaultConfig /* sh */ "$PWD"}
   '';
 
   pop.passage = target: source: /* sh */ ''
@@ -179,12 +174,7 @@ let
     export PASSAGE_IDENTITIES_FILE=${quote source.identities_file}
 
     umask 0077
-
-    tmp_dir=$(${coreutils}/bin/mktemp -dt populate-passage.XXXXXXXX)
-    trap cleanup EXIT
-    cleanup() {
-      rm -fR "$tmp_dir"
-    }
+    chmod 0700 "$PWD"
 
     ${findutils}/bin/find "$PASSAGE_DIR" -type f -name \*.age -follow |
     while read -r age_path; do
@@ -192,24 +182,23 @@ let
       pass_name=''${age_path#$PASSAGE_DIR/}
       pass_name=''${pass_name%.age}
 
-      pass_out=$tmp_dir/$pass_name
+      pass_out=$PWD/$pass_name
 
       ${coreutils}/bin/mkdir -p "$(${coreutils}/bin/dirname "$pass_out")"
-      ${passage}/bin/passage show "$pass_name" > "$pass_out"
+      if ! ${passage}/bin/passage show "$pass_name" > "$pass_out" 2>&1; then
+        echo ++ secrets ${quote (head (match "([^.]+).*" target.host))} show "$pass_name" >&2
+        ${jq}/bin/jq -Rr 'select(test("^[^[]"))' "$pass_out" >&2
+        exit 1
+      fi
 
       ${coreutils}/bin/touch -r "$age_path" "$pass_out"
     done
 
-    ${rsync' target rsyncDefaultConfig /* sh */ "$tmp_dir"}
+    ${rsync' target rsyncDefaultConfig /* sh */ "$PWD"}
   '';
 
   pop.pipe = target: source: /* sh */ ''
-    tmp_dir=$(${coreutils}/bin/mktemp -dt populate-pipe.XXXXXXXX)
-    trap cleanup EXIT
-    cleanup() {
-      rm -fR "$tmp_dir"
-    }
-    out=$tmp_dir/out
+    out=$PWD/out
 
     ${quote source.command} > "$out"
     ${coreutils}/bin/touch -t 300001010000 "$out"
@@ -227,6 +216,9 @@ let
     target' = target // { path = "${target.path}/${name}"; };
   in writers.writeDash "populate.${target'.host}.${name}" ''
     set -efu
+    PWD=$TMPDIR/workdirs/${quote name}
+    mkdir -p "$PWD"
+    cd "$PWD"
     ${pop.${source.type} target' source'}
   '';
 
@@ -288,6 +280,12 @@ in
 { backup ? false, force ? false, source, target }:
 writers.writeDash "populate.${target.host}" ''
   set -efu
+
+  # Change to a private temporary directory to prevent collisions.
+  TMPDIR=$(${coreutils}/bin/mktemp -dt populate.XXXXXXXX)
+  readonly TMPDIR # Ensure the trap will delete the correct thing.
+  trap 'rm -R "$TMPDIR"' EXIT
+
   ${check { inherit force target; }}
   set -x
   ${optionalString backup (do-backup { inherit target; })}
