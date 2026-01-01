@@ -272,7 +272,7 @@ let
     exec ${openssh}/bin/ssh \
         ${concatMapStringsSep " " quote (mkUserPortSSHOpts target)} \
         -o ControlMaster=auto \
-        -o ControlPath="$TMPDIR"/ssh-%r@$h:%p.sock \
+        -o ControlPath="$TMPDIR"/ssh-%r@%h:%p.sock \
         -o ControlPersist=1h \
         -T \
         ${concatMapStringsSep " " quote target.extraOptions} \
@@ -295,5 +295,5 @@ writers.writeDash "populate.${target.host}" ''
   ${optionalString backup (do-backup { inherit target; })}
   ${concatStringsSep "\n" (mapAttrsToList (populate target) source)}
 
-  ${ssh' target} -q -O stop dummy
+  ${ssh' target} -q -O stop ${quote target.host}
 ''
