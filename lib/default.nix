@@ -28,6 +28,20 @@ let {
       # This function's return value can be used as pkgs.populate input.
       source: sanitize (eval source).config.source;
 
+    # Inputs a source draws from other sources, as list of attribute sets like
+    # { path = [ "stockholm" "nixpkgs" ]; source = "nixpkgs"; }.
+    flakeFollows = source: let
+      flatten = prefix: inputs: lib.concatLists (lib.mapAttrsToList
+        (name: input:
+          lib.optional (input.follows or null != null) {
+            path = prefix ++ [ name ];
+            source = input.follows;
+          } ++
+          flatten (prefix ++ [ name ]) (input.inputs or {}))
+        inputs);
+    in
+      flatten [] (source.${source.type}.inputs or {});
+
     maybeHostName = default: let
       # We're parsing /etc/hostname here because reading
       # /proc/sys/kernel/hostname yields ""
