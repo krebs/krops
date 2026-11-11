@@ -170,6 +170,10 @@
     };
     flake = lib.types.submodule {
       options = {
+        fetchOnTarget = lib.mkOption {
+          default = false;
+          type = lib.types.bool;
+        };
         flake = lib.mkOption {
           type = lib.types.str; # TODO lib.types.flake-ref
         };

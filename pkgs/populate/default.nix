@@ -190,15 +190,23 @@ let
   in
     rsync' target config sourcePath;
 
-  # Delivers the flake itself, as its input named null.  Only inputs can be
-  # fetched on the target, so fetchOnTarget is always false here.
-  pop.flake = target: source:
-    pop.flake-input target (source // { name = null; fetchOnTarget = false; });
+  # Delivers the flake itself, as its input named null.
+  pop.flake = target: source: pop.flake-input target (source // { name = null; });
 
   pop.flake-input = target: source: let
     nix' = "${nix}/bin/nix --extra-experimental-features ${quote "nix-command flakes"}";
     inputPath = if source.name == null then [] else splitString "/" source.name;
     fetchOnTarget = source.fetchOnTarget or false;
+    # Tells whether a flake reference names a scheme that doesn't refer to the
+    # deploying machine, so the target can fetch the flake on its own.
+    # Indirect references get resolved on the deploying machine.
+    isRemoteRef = ref: let
+      scheme = builtins.match "([a-z0-9+]+):.*" ref;
+    in
+      scheme != null &&
+      !elem (head scheme) [
+        "file" "flake" "git+file" "hg+file" "path" "tarball+file"
+      ];
     # Caches per-flake information, so it's obtained only once, even if
     # several sources use the same flake.
     cached = kind: command: /* sh */ ''
@@ -222,35 +230,79 @@ let
     node =
       if source.name == null then "."
       else concatMapStrings (name: ".inputs[${toJSON name}]") inputPath;
-    # jq filter selecting the locked input and its own inputs in nix flake
-    # metadata's output, as fetchTree arguments, the input first.
-    locked = /* jq */ ''
+    # jq definitions for nix flake metadata's output, resolving a path of
+    # input names to the key of its lock node.
+    refs = /* jq */ ''
       .locks as $l
       | def ref($path):
           reduce $path[] as $name ($l.root;
             $l.nodes[.].inputs[$name] // error("no input \($name)")
             | if type == "array" then ref(.) else . end);
+    '';
+    # jq filter selecting the locked input and its own inputs in nix flake
+    # metadata's output, as lock node keys with fetchTree arguments, the input
+    # first.  The flake itself has no lock entry, so its arguments are null.
+    # Lock entries of flakes in subdirectories name the subdirectory, which
+    # isn't a fetchTree argument.
+    locked = /* jq */ ''
+      ${refs}
         def deps($key):
           $key, ($l.nodes[$key].inputs // {} | .[]
             | if type == "array" then ref(.) else . end
             | deps(.));
         ref($input) as $key
         | [$key] + ([deps($key)] | unique - [$key])
-        | map($l.nodes[.].locked)
+        | map({
+            key: .,
+            locked: ($l.nodes[.].locked | if . == null then . else del(.dir) end)
+          })
+    '';
+    # jq filter selecting the subdirectory containing the flake or input in
+    # nix flake metadata's output, or the empty string.
+    dir = /* jq */ ''
+      ${refs}
+        if $input == [] then .locked else $l.nodes[ref($input)].locked end
+        | .dir // ""
+    '';
+    # jq filter telling whether the target can fetch the flake itself, i.e.
+    # whether its locked reference doesn't refer to the deploying machine.
+    selfIsRemote = /* jq */ ''
+      .locked | (.type != "path") and ((.url // "") | startswith("file:") | not)
     '';
     sentinel = "${dirOf target.path}/.populate";
     # Directory of garbage collector roots for the input's own inputs.
     inputsRoots = "${sentinel}/flake-inputs/${baseNameOf target.path}";
-    # Reads store paths from stdin, links the first one at the target path, and
-    # registers it and the remaining ones as garbage collector roots.  Roots
-    # get added before obsolete ones get removed, so the inputs stay rooted.
+    # Directory receiving the flake itself if the target can't fetch it.
+    uploads = "${sentinel}/flake-uploads";
+    upload = "${uploads}/${baseNameOf target.path}";
+    removeUpload = /* sh */ ''
+      if test -e ${quote upload}; then
+        chmod -R u+w ${quote upload}
+        rm -fR ${quote upload}
+      fi
+      # Sources get populated one after another, so no other source uses the
+      # directory meanwhile.
+      if test -d ${quote uploads} && test -z "$(ls -A ${quote uploads})"; then
+        rmdir ${quote uploads}
+      fi
+    '';
+    # Reads the subdirectory containing the flake or input, which may be
+    # empty, followed by store paths from stdin.  Links the first store path,
+    # or the subdirectory therein, at the target path, and registers it and
+    # the remaining ones as garbage collector roots.  Roots get added before
+    # obsolete ones get removed, so the inputs stay rooted.
     link = /* sh */ ''
       set -efu
+      read -r dir
       read -r path
       if test -e ${quote target.path} && ! test -L ${quote target.path}; then
         rm -fR ${quote target.path}
       fi
       nix-store --realise "$path" --add-root ${quote target.path} --indirect >/dev/null
+      # The garbage collector follows the link into the store path.
+      if test -n "$dir"; then
+        ln -fns "$path/$dir" ${quote target.path}
+      fi
 
       ${sentinelDirectory sentinel}
       mkdir -p ${quote inputsRoots}
@@ -275,24 +327,86 @@ let
         rmdir ${quote inputsRoots}
       fi
     '';
-    # Reads fetchTree arguments as JSON array from stdin, fetches them, and
-    # links the results.
+    # Reads lock node keys with fetchTree arguments as JSON array, the store
+    # path of the flake itself, and the subdirectory containing the flake or
+    # input from stdin, fetches them, and links the results.  The flake
+    # itself, if given, stands in for the first fetchTree arguments, which are
+    # null then, and gets added from the upload directory unless the store has
+    # it already.
     fetchAndLink = /* sh */ ''
       set -efu
       ${requireFlakes "fetching flake inputs on the target"}
       read -r locked
-      paths=$(LOCKED=$locked nix eval --impure --raw --expr '
-        builtins.concatStringsSep "\n"
-          (map (locked: (builtins.fetchTree locked).outPath)
-            (builtins.fromJSON (builtins.getEnv "LOCKED")))
-      ')
-      printf '%s\n' "$paths" | {
+      read -r self
+      read -r dir
+      if test -n "$self" && ! nix-store --check-validity "$self" 2>/dev/null; then
+        name=$(basename "$self" | cut -c34-)
+        mv ${quote upload}/tree ${quote upload}/"$name"
+        added=$(nix-store --add-fixed --recursive sha256 ${quote upload}/"$name")
+        ${removeUpload}
+        if test "$added" != "$self"; then
+          >&2 printf 'error: flake %s arrived as %s instead of %s\n' \
+              ${quote source.flake} "$added" "$self"
+          exit 1
+        fi
+      fi
+      # Inputs referring to local paths can only be fetched if the target has
+      # them as well.
+      paths=$(
+        FLAKE=${quote source.flake} LOCKED=$locked SELF=$self \
+        nix eval --impure --raw --expr '
+          let
+            localPath = locked:
+              if locked.type == "path" then locked.path
+              else let
+                match = builtins.match "file:(//)?(.*)" (locked.url or "");
+              in
+                if match == null then null else builtins.elemAt match 1;
+            fetch = { key, locked }:
+              if locked == null then builtins.getEnv "SELF"
+              else let path = localPath locked; in
+                if path != null && !builtins.pathExists path then
+                  throw "flake ''${builtins.getEnv "FLAKE"}: input ''${key} refers to ''${path}, which does not exist on the target"
+                else
+                  (builtins.fetchTree locked).outPath;
+          in
+            builtins.concatStringsSep "\n"
+              (map fetch (builtins.fromJSON (builtins.getEnv "LOCKED")))
+        '
+      )
+      printf '%s\n%s\n' "$dir" "$paths" | {
+        ${link}
+      }
+    '';
+    # Fetches the flake and its inputs, and links the results.
+    archiveAndLink = /* sh */ ''
+      set -efu
+      ${requireFlakes "fetching flakes on the target"}
+      metadata=$(nix flake metadata --json --no-update-lock-file ${quote source.flake})
+      archive=$(nix flake archive --json --no-update-lock-file ${quote source.flake})
+      lines=$(
+        METADATA=$metadata ARCHIVE=$archive \
+        nix eval --impure --raw --expr '
+          let
+            paths = node:
+              [ node.path ] ++
+              builtins.concatMap paths (builtins.attrValues node.inputs);
+            metadata = builtins.fromJSON (builtins.getEnv "METADATA");
+            archive = builtins.fromJSON (builtins.getEnv "ARCHIVE");
+          in
+            builtins.concatStringsSep "\n"
+              ([ (metadata.locked.dir or "") ] ++ paths archive)
+        '
+      )
+      printf '%s\n' "$lines" | {
         ${link}
       }
     '';
   in
     if !fetchOnTarget && !isLocalTarget target && target.sudo then
       throw "krops: source ${target.path}: copying flakes to targets with sudo is not supported"
+    else if fetchOnTarget && source.name == null && isRemoteRef source.flake then
+      runShell target archiveAndLink
     else if fetchOnTarget then /* sh */ ''
       set -efu
 
@@ -306,8 +420,46 @@ let
       ); then
         ${noInput}
       fi
+      dir=$(
+        ${jq}/bin/jq -r --argjson input ${quote (toJSON inputPath)} ${quote dir} \
+          "$cache"
+      )
 
-      printf '%s\n' "$locked" | {
+      self=
+      ${optionalString (source.name == null) /* sh */ ''
+        # The flake itself has no lock entry, so the target fetches it by its
+        # locked reference, if it can, or else receives it.
+        if ${jq}/bin/jq -e ${quote selfIsRemote} "$cache" >/dev/null; then
+          locked=$(
+            ${jq}/bin/jq -c --argjson locked "$locked" \
+                '.locked as $self | $locked | .[0].locked = ($self | del(.__final, .dir))' \
+              "$cache"
+          )
+        else
+          self=$(${jq}/bin/jq -r .path "$cache")
+          ${optionalString (!isLocalTarget target) /* sh */ ''
+            if ! printf '%s\n' "$self" | {
+              ${runShell target /* sh */ ''
+                read -r self
+                nix-store --check-validity "$self" 2>/dev/null
+              ''}
+            }; then
+              ${runShell target /* sh */ ''
+                set -efu
+                ${sentinelDirectory sentinel}
+                ${removeUpload}
+                mkdir -p ${quote upload}
+              ''}
+              # Without applying .rsync-filter files, which would change the flake.
+              ${rsync' (target // { path = "${upload}/tree"; })
+                       (rsyncDefaultConfig // { filterFiles = false; })
+                       /* sh */ ''"$self"''}
+            fi
+          ''}
+        fi
+      ''}
+
+      printf '%s\n%s\n%s\n' "$locked" "$self" "$dir" | {
         ${runShell target fetchAndLink}
       }
     '' else /* sh */ ''
@@ -325,6 +477,14 @@ let
       # target need as well.
       paths=$(${jq}/bin/jq -r ${quote "${node} | .. | .path? | strings"} "$cache")
 
+      ${cached "metadata" /* sh */ ''
+        ${nix'} flake metadata --json --no-update-lock-file ${quote source.flake}
+      ''}
+      dir=$(
+        ${jq}/bin/jq -r --argjson input ${quote (toJSON inputPath)} ${quote dir} \
+          "$cache"
+      )
+
       ${optionalString (!isLocalTarget target) /* sh */ ''
         mkdir -p "$PWD"/bin
         ln -fns ${sshNix' target} "$PWD"/bin/ssh
@@ -332,7 +492,7 @@ let
         ${nix'} copy --to ${quote "ssh://${target.host}"} $paths >&2
       ''}
 
-      printf '%s\n' "$paths" | {
+      printf '%s\n%s\n' "$dir" "$paths" | {
         ${runShell target link}
       }
     '';
@@ -514,7 +674,8 @@ let
           config.filters} \
         -e ${quote (ssh' target)} \
         --info=backup,del,copy,misc,mount,name,nonreg,remove,skip,symsafe \
-        -FrlptD \
+        ${optionalString (config.filterFiles or true) "-F"} \
+        -rlptD \
         ${optionalString config.deleteExcluded /* sh */ "--delete-excluded"} \
         "$source_path" \
         ${quote (
