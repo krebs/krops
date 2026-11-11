@@ -39,6 +39,10 @@
         default = null;
         type = lib.types.nullOr (lib.types.either lib.types.str source-types.flake);
       };
+      flake-input = lib.mkOption {
+        default = null;
+        type = lib.types.nullOr source-types.flake-input;
+      };
       git = lib.mkOption {
         default = null;
         type = lib.types.nullOr source-types.git;
@@ -166,16 +170,20 @@
     };
     flake = lib.types.submodule {
       options = {
-        fetchOnTarget = lib.mkOption {
-          default = false;
-          type = lib.types.bool;
-        };
         flake = lib.mkOption {
           type = lib.types.str; # TODO lib.types.flake-ref
         };
-        input = lib.mkOption {
-          default = null;
-          type = lib.types.nullOr lib.types.str;
+        inputs = lib.mkOption {
+          default = {};
+          type = flake-inputs;
+        };
+      };
+    };
+    flake-input = lib.types.submodule {
+      options = {
+        fetchOnTarget = lib.mkOption {
+          default = false;
+          type = lib.types.bool;
         };
       };
     };

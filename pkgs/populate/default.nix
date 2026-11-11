@@ -190,10 +190,14 @@ let
   in
     rsync' target config sourcePath;
 
-  pop.flake = target: source: let
+  # Delivers the flake itself, as its input named null.  Only inputs can be
+  # fetched on the target, so fetchOnTarget is always false here.
+  pop.flake = target: source:
+    pop.flake-input target (source // { name = null; fetchOnTarget = false; });
+
+  pop.flake-input = target: source: let
     nix' = "${nix}/bin/nix --extra-experimental-features ${quote "nix-command flakes"}";
-    input = source.input or null;
-    inputPath = if input == null then [] else splitString "/" input;
+    inputPath = if source.name == null then [] else splitString "/" source.name;
     fetchOnTarget = source.fetchOnTarget or false;
     # Caches per-flake information, so it's obtained only once, even if
     # several sources use the same flake.
@@ -211,12 +215,12 @@ let
     '';
     noInput = /* sh */ ''
       >&2 printf 'error: flake %s has no input %s\n' \
-          ${quote source.flake} ${quote (toString input)}
+          ${quote source.flake} ${quote (toString source.name)}
       exit 1
     '';
     # jq filter selecting the flake or input in nix flake archive's output.
     node =
-      if input == null then "."
+      if source.name == null then "."
       else concatMapStrings (name: ".inputs[${toJSON name}]") inputPath;
     # jq filter selecting the locked input and its own inputs in nix flake
     # metadata's output, as fetchTree arguments, the input first.
@@ -287,10 +291,8 @@ let
       }
     '';
   in
-    if fetchOnTarget && input == null then
-      throw "krops: flake source ${target.path}: fetching on the target needs an input"
-    else if !fetchOnTarget && !isLocalTarget target && target.sudo then
-      throw "krops: flake source ${target.path}: copying to targets with sudo is not supported"
+    if !fetchOnTarget && !isLocalTarget target && target.sudo then
+      throw "krops: source ${target.path}: copying flakes to targets with sudo is not supported"
     else if fetchOnTarget then /* sh */ ''
       set -efu
 
