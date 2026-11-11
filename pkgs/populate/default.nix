@@ -288,6 +288,7 @@ writers.writeDash "populate.${target.host}" ''
   # Change to a private temporary directory to prevent collisions.
   TMPDIR=$(${coreutils}/bin/mktemp -dt populate.XXXXXXXX)
   readonly TMPDIR # Ensure the trap will delete the correct thing.
+  export TMPDIR # Share it with the jobs and the ssh wrapper.
   trap 'rm -R "$TMPDIR"' EXIT
 
   ${check { inherit force target; }}
