@@ -239,12 +239,28 @@ let
             $l.nodes[.].inputs[$name] // error("no input \($name)")
             | if type == "array" then ref(.) else . end);
     '';
+    # jq definitions for subdirectories containing flakes, which flake
+    # references and lock entries name either as attribute dir or as query
+    # parameter dir of their URL, depending on the version of Nix.  fetchTree
+    # supports neither.
+    subdirs = /* jq */ ''
+      def subdir:
+        .dir // ((.url // "") | capture("[?&]dir=(?<dir>[^&]*)").dir) // "";
+      def withoutSubdir:
+        del(.dir)
+        | if (.url | type) == "string" then
+            .url |= (sub("(?<sep>[?&])dir=[^&]*&?"; "\(.sep)") | sub("[?&]$"; ""))
+          else . end;
+      def subdirOf($node):
+        [$node.locked, $node.original]
+        | map(select(. != null) | subdir | select(. != ""))
+        | first // "";
+    '';
     # jq filter selecting the locked input and its own inputs in nix flake
     # metadata's output, as lock node keys with fetchTree arguments, the input
     # first.  The flake itself has no lock entry, so its arguments are null.
-    # Lock entries of flakes in subdirectories name the subdirectory, which
-    # isn't a fetchTree argument.
     locked = /* jq */ ''
+      ${subdirs}
       ${refs}
         def deps($key):
           $key, ($l.nodes[$key].inputs // {} | .[]
@@ -254,15 +270,23 @@ let
         | [$key] + ([deps($key)] | unique - [$key])
         | map({
             key: .,
-            locked: ($l.nodes[.].locked | if . == null then . else del(.dir) end)
+            locked: ($l.nodes[.].locked | if . == null then . else withoutSubdir end)
           })
     '';
     # jq filter selecting the subdirectory containing the flake or input in
     # nix flake metadata's output, or the empty string.
     dir = /* jq */ ''
+      ${subdirs}
       ${refs}
-        if $input == [] then .locked else $l.nodes[ref($input)].locked end
-        | .dir // ""
+        if $input == [] then subdirOf(.) else subdirOf($l.nodes[ref($input)]) end
+    '';
+    # jq filter replacing the null fetchTree arguments of the flake itself in
+    # the JSON array $locked with its locked reference.
+    selfLocked = /* jq */ ''
+      ${subdirs}
+      .locked as $self
+      | $locked
+      | .[0].locked = ($self | del(.__final) | withoutSubdir)
     '';
     # jq filter telling whether the target can fetch the flake itself, i.e.
     # whether its locked reference doesn't refer to the deploying machine.
@@ -393,9 +417,19 @@ let
               builtins.concatMap paths (builtins.attrValues node.inputs);
             metadata = builtins.fromJSON (builtins.getEnv "METADATA");
             archive = builtins.fromJSON (builtins.getEnv "ARCHIVE");
+            # The subdirectory, as attribute dir or as query parameter dir
+            # of the URL, depending on the version of Nix.
+            subdir = ref:
+              ref.dir or (let
+                match = builtins.match ".*[?&]dir=([^&]*).*" (ref.url or "");
+              in
+                if match == null then "" else builtins.head match);
+            subdirs = builtins.filter (dir: dir != "")
+              (map subdir [ (metadata.locked or {}) (metadata.original or {}) ]);
           in
             builtins.concatStringsSep "\n"
-              ([ (metadata.locked.dir or "") ] ++ paths archive)
+              ([ (if subdirs == [] then "" else builtins.head subdirs) ] ++
+               paths archive)
         '
       )
       printf '%s\n' "$lines" | {
@@ -432,7 +466,7 @@ let
         if ${jq}/bin/jq -e ${quote selfIsRemote} "$cache" >/dev/null; then
           locked=$(
             ${jq}/bin/jq -c --argjson locked "$locked" \
-                '.locked as $self | $locked | .[0].locked = ($self | del(.__final, .dir))' \
+                ${quote selfLocked} \
               "$cache"
           )
         else
