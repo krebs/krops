@@ -129,6 +129,16 @@ architecture.
 Run `nixos-rebuild` immediately without building the system in a dedicated `nix
 build` step.
 
+### `flake` (optional)
+
+Name of the source containing the flake to deploy, optionally followed by `#`
+and the name of the NixOS configuration, e.g. `"myconf#myhost"`.  If the source
+draws inputs from other sources, its generated flake gets deployed, see
+[Flake inputs from sources](#flake-inputs-from-sources).  This makes
+`nixos-rebuild` use `--flake`, and requires Nix with flake support (Nix 2.4 or
+later) on the build target.  Without the name of the NixOS configuration,
+`nixos-rebuild` uses the host name of the build target.
+
 ### `force` (optional, defaults to false)
 
 Create the sentinel file (`/var/src/.populate`) before syncing the new source.

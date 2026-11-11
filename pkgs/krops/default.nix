@@ -5,13 +5,18 @@ in
 { nix, openssh, populate, writers }: rec {
 
   rebuild = {
+    flake ? null,
     useNixOutputMonitor
   }:
   args: target:
     runShell target {}
       (withNixOutputMonitor target useNixOutputMonitor /* sh */ ''
+        ${lib.optionalString (flake != null)
+          (lib.shell.requireFlakes "deploying a flake")}
         NIX_PATH=${lib.escapeShellArg target.path} \
-        nixos-rebuild ${lib.escapeShellArgs args}
+        nixos-rebuild ${lib.escapeShellArgs (args ++ lib.optionals (flake != null) [
+          "--flake" "${target.path}/${flake}"
+        ])}
       '');
 
   runShell = target: {
@@ -91,6 +96,7 @@ in
     buildTarget ? null,
     crossDeploy ? false,
     fast ? null,
+    flake ? null,
     force ? false,
     operation ? "switch",
     source,
@@ -109,7 +115,7 @@ in
         ${lib.optionalString (buildTarget' != target')
           (populate { inherit backup force source; target = buildTarget'; })}
         ${populate { inherit backup force source; target = target'; }}
-        ${rebuild { inherit useNixOutputMonitor; } ([
+        ${rebuild { inherit flake useNixOutputMonitor; } ([
           operation
         ] ++ lib.optionals crossDeploy [
           "--no-build-nix"
