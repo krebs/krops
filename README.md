@@ -265,6 +265,53 @@ Supported attributes:
   of rsync. Defaults to `true`.
 
 
+### `flake`
+
+The flake source type delivers a flake, or one of its locked inputs, to the
+target.  The flake gets archived locally using `nix flake archive`, the
+selected input and its own inputs get copied into the target's Nix store using
+`nix copy`, and the target path becomes a symlink to the input's store path,
+registered as garbage collector root.  The input's own inputs get garbage
+collector roots in `.populate/flake-inputs/<name>`, which turns the sentinel
+file into a directory.
+
+Because the target path points at the store path named by the flake's lock
+file, it can be used in `NIX_PATH` as well as by flakes evaluated on the
+target, without network access.
+
+Supported attributes:
+
+* `flake` -
+  flake reference, e.g. the absolute path of a directory containing a
+  `flake.nix`.  Its lock file is used as is; populating fails if the lock
+  file needs to be updated.
+
+* `input` (optional) -
+  name of the input to deliver.  Inputs of inputs are separated by `/`,
+  e.g. `stockholm/nixpkgs`.  If omitted, the flake itself gets delivered,
+  which includes only files tracked by Git.  Use a `file` source for work
+  trees with untracked files.
+
+Instead of an attribute set, the flake reference can be given as a string.
+
+The flake commands run using krops' own Nix, so flakes don't need to be
+enabled on the deploying machine.  The target only needs `nix-store`.
+Because the copied store paths aren't signed, the target user must be allowed
+to import them, i.e. be `root` or a trusted user.  Targets using `sudo` aren't
+supported.
+
+Example:
+
+```nix
+{
+  nixpkgs.flake = {
+    flake = toString ./.;
+    input = "nixpkgs";
+  };
+}
+```
+
+
 ### `git`
 
 Git sources that will be fetched on the target machine.

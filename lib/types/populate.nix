@@ -31,6 +31,14 @@
           source-types.file
         ]);
       };
+      flake = lib.mkOption {
+        apply = x:
+          if lib.types.str.check x
+            then { flake = x; }
+            else x;
+        default = null;
+        type = lib.types.nullOr (lib.types.either lib.types.str source-types.flake);
+      };
       git = lib.mkOption {
         default = null;
         type = lib.types.nullOr source-types.git;
@@ -134,6 +142,17 @@
         deleteExcluded = lib.mkOption {
           default = true;
           type = lib.types.bool;
+        };
+      };
+    };
+    flake = lib.types.submodule {
+      options = {
+        flake = lib.mkOption {
+          type = lib.types.str; # TODO lib.types.flake-ref
+        };
+        input = lib.mkOption {
+          default = null;
+          type = lib.types.nullOr lib.types.str;
         };
       };
     };

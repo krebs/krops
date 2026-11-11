@@ -1,7 +1,7 @@
 with import ../../lib;
 with shell;
 
-{ coreutils, dash, findutils, git, jq, openssh, pass, passage, rsync, writers }:
+{ coreutils, dash, findutils, git, jq, nix, openssh, pass, passage, rsync, writers }:
 
 let
   check = { force, target }: let
@@ -60,6 +60,93 @@ let
         else quote source.path;
   in
     rsync' target config sourcePath;
+
+  pop.flake = target: source: let
+    nix' = "${nix}/bin/nix --extra-experimental-features ${quote "nix-command flakes"}";
+    input = source.input or null;
+    # jq filter selecting the flake or input in nix flake archive's output.
+    node =
+      if input == null then "."
+      else concatMapStrings (name: ".inputs[${toJSON name}]") (splitString "/" input);
+    sentinel = "${dirOf target.path}/.populate";
+    # Directory of garbage collector roots for the input's own inputs.
+    inputsRoots = "${sentinel}/flake-inputs/${baseNameOf target.path}";
+    # Reads store paths from stdin, links the first one at the target path, and
+    # registers it and the remaining ones as garbage collector roots.  Roots
+    # get added before obsolete ones get removed, so the inputs stay rooted.
+    link = /* sh */ ''
+      set -efu
+      read -r path
+      if test -e ${quote target.path} && ! test -L ${quote target.path}; then
+        rm -fR ${quote target.path}
+      fi
+      nix-store --realise "$path" --add-root ${quote target.path} --indirect >/dev/null
+
+      # The sentinel only needs to exist, so it can become a directory.
+      if test -f ${quote sentinel}; then
+        rm ${quote sentinel}
+        mkdir ${quote sentinel}
+      fi
+      mkdir -p ${quote inputsRoots}
+      roots=
+      while read -r path; do
+        root=$(basename "$path")
+        if test "$(readlink ${quote inputsRoots}/"$root")" != "$path"; then
+          nix-store --realise "$path" \
+              --add-root ${quote inputsRoots}/"$root" --indirect \
+            >/dev/null
+        fi
+        roots="$roots $root"
+      done
+      ls -A ${quote inputsRoots} | while read -r root; do
+        case " $roots " in
+          *" $root "*) ;;
+          *) rm ${quote inputsRoots}/"$root" ;;
+        esac
+      done
+      # An input without own inputs leaves the directory empty.
+      if test -z "$roots"; then
+        rmdir ${quote inputsRoots}
+      fi
+    '';
+  in
+    if target.sudo then
+      throw "krops: flake source ${target.path}: targets with sudo are not supported"
+    else /* sh */ ''
+      set -efu
+
+      # Archive each flake only once, even if several sources use it.
+      archive=$TMPDIR/flake-archive.$(
+        printf %s ${quote source.flake} |
+        ${coreutils}/bin/sha256sum |
+        ${coreutils}/bin/cut -c-32
+      ).json
+      if ! test -e "$archive"; then
+        ${nix'} flake archive --json --no-update-lock-file ${quote source.flake} \
+          > "$archive"
+      fi
+
+      if ! ${jq}/bin/jq -e ${quote "${node} | .path"} "$archive" >/dev/null; then
+        >&2 printf 'error: flake %s has no input %s\n' \
+            ${quote source.flake} ${quote (toString input)}
+        exit 1
+      fi
+
+      # The input followed by its own inputs, which flakes evaluated on the
+      # target need as well.
+      paths=$(${jq}/bin/jq -r ${quote "${node} | .. | .path? | strings"} "$archive")
+
+      ${optionalString (!isLocalTarget target) /* sh */ ''
+        mkdir -p "$PWD"/bin
+        ln -fns ${sshNix' target} "$PWD"/bin/ssh
+        PATH=$PWD/bin:$PATH \
+        ${nix'} copy --to ${quote "ssh://${target.host}"} $paths >&2
+      ''}
+
+      printf '%s\n' "$paths" | {
+        ${runShell target link}
+      }
+    '';
 
   pop.git = target: source: runShell target /* sh */ ''
     set -efu
@@ -267,6 +354,15 @@ let
         '' else ''
           ${ssh' target} ${quote target.host} ${quote command}
         '';
+
+  # ssh for Nix's ssh:// store.  Without the control socket, because Nix waits
+  # for its LocalCommand, which may not run over a multiplexed connection.
+  sshNix' = target: writers.writeDash "ssh-nix-wrapper" ''
+    exec ${openssh}/bin/ssh \
+        ${concatMapStringsSep " " quote (mkUserPortSSHOpts target)} \
+        ${concatMapStringsSep " " quote target.extraOptions} \
+        "$@"
+  '';
 
   ssh' = target: writers.writeDash "ssh-wrapper" ''
     exec ${openssh}/bin/ssh \
