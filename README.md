@@ -284,11 +284,30 @@ archived locally using `nix flake archive`, which includes only files tracked
 by Git, so use a `file` source for work trees with untracked files.  The
 flake and its inputs get copied into the target's Nix store using `nix copy`,
 and the target path becomes a symlink to the flake's store path, registered
-as garbage collector root.  The inputs get garbage collector roots in
+as garbage collector root.  For flakes in a subdirectory, e.g.
+`git+file:/src/mono?dir=sub`, the symlink points at that subdirectory of the
+store path.  The inputs get garbage collector roots in
 `.populate/flake-inputs/<name>`, which turns the sentinel file into a
 directory.
 
 Supported attributes:
+
+* `fetchOnTarget` (optional) -
+  boolean that controls whether the target fetches the flake's inputs itself
+  instead of receiving them from the deploying machine.  The target then uses
+  the arguments recorded in the lock file, so inputs that refer to local paths
+  can only be fetched if the target has these paths as well; populating fails
+  otherwise, naming the input.  If the flake reference names a scheme that
+  doesn't refer to the deploying machine, e.g. `github:`, the target handles
+  the flake entirely on its own, and the deploying machine doesn't fetch it.
+  Otherwise the target fetches the flake itself as well if its locked
+  reference doesn't refer to the deploying machine, e.g. for indirect
+  references resolving to `github:` flakes, or else the flake gets
+  transferred using `rsync`, unless the target's Nix store has it already,
+  and added to the target's Nix store, where it gets the same store path as
+  on the deploying machine.  This requires Nix with flake support (Nix 2.4 or
+  later) on the target, and works for targets using `sudo`.  Defaults to
+  `false`.
 
 * `flake` -
   flake reference, e.g. the absolute path of a directory containing a
@@ -302,10 +321,10 @@ Supported attributes:
 Instead of an attribute set, the flake reference can be given as a string.
 
 The flake commands on the deploying machine run using krops' own Nix, so
-flakes don't need to be enabled there.  The target only needs `nix-store`.
-Because the copied store paths aren't signed, the target user must be allowed
-to import them, i.e. be `root` or a trusted user, and targets using `sudo`
-aren't supported.
+flakes don't need to be enabled there.  Without `fetchOnTarget`, the target
+only needs `nix-store`.  Because the copied store paths aren't signed, the
+target user must be allowed to import them, i.e. be `root` or a trusted user,
+and targets using `sudo` aren't supported.
 
 
 ### `flake-input`
@@ -336,10 +355,11 @@ Supported attributes:
 * `fetchOnTarget` (optional) -
   boolean that controls whether the target fetches the input itself instead
   of receiving it from the deploying machine.  The target then uses the
-  arguments recorded in the lock file, so inputs that refer to local paths of
-  the deploying machine can't be fetched this way.  This requires Nix with
-  flake support (Nix 2.4 or later) on the target, and works for targets using
-  `sudo`.  Defaults to `false`.
+  arguments recorded in the lock file, so inputs that refer to local paths
+  can only be fetched if the target has these paths as well; populating fails
+  otherwise, naming the input.  This requires Nix with flake support (Nix 2.4
+  or later) on the target, and works for targets using `sudo`.  Defaults to
+  `false`.
 
 * `inputs` (optional) -
   inputs of the flake in this source to draw from other sources, see
