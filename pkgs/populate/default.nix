@@ -777,5 +777,8 @@ writers.writeDash "populate.${target.host}" ''
   ${concatStringsSep "\n" (mapAttrsToList (populate target) source)}
   ${flakes target source}
 
-  ${ssh' target} -q -O stop ${quote target.host}
+  # Stop the ssh master, if any source started one.
+  if ${ssh' target} -q -O check ${quote target.host} 2>/dev/null; then
+    ${ssh' target} -q -O stop ${quote target.host}
+  fi
 ''
