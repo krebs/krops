@@ -108,6 +108,17 @@ in
         then target'
         else lib.mkTarget buildTarget;
     target' = lib.mkTarget target;
+    # The source's generated flake, if it draws inputs from other sources.
+    flake' = let
+      name = lib.head (lib.splitString "#" flake);
+    in
+      if flake == null then null
+      else if !(source ? ${name}) then
+        throw "krops: flake ${name} is not a source"
+      else if lib.flakeFollows source.${name} != [] then
+        ".populate/flakes/${flake}"
+      else
+        flake;
   in
     lib.traceIf (fast != null) "writeDeploy: it's now always fast, setting the `fast` attribute is deprecated and will be removed in future" (
       writers.writeDash name ''
@@ -115,7 +126,7 @@ in
         ${lib.optionalString (buildTarget' != target')
           (populate { inherit backup force source; target = buildTarget'; })}
         ${populate { inherit backup force source; target = target'; }}
-        ${rebuild { inherit flake useNixOutputMonitor; } ([
+        ${rebuild { flake = flake'; inherit useNixOutputMonitor; } ([
           operation
         ] ++ lib.optionals crossDeploy [
           "--no-build-nix"
