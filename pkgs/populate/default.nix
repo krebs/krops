@@ -25,7 +25,7 @@ let
   in
     runShell target /* sh */ ''
       if ! test -d ${quote sentinelFile}; then
-        >&2 printf 'error" sentinel file is not a directory: %s\n' ${quote (
+        >&2 printf 'error: sentinel file is not a directory: %s\n' ${quote (
           optionalString (!isLocalTarget target) "${target.host}:" +
           sentinelFile
         )}
