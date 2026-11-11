@@ -292,13 +292,21 @@ Supported attributes:
   which includes only files tracked by Git.  Use a `file` source for work
   trees with untracked files.
 
+* `fetchOnTarget` (optional) -
+  boolean that controls whether the target fetches the input itself instead
+  of receiving it from the deploying machine.  The target then uses the
+  arguments recorded in the lock file, so inputs that refer to local paths of
+  the deploying machine can't be fetched this way.  This requires `input`,
+  and Nix with flake support (Nix 2.4 or later) on the target.  Defaults to
+  `false`.
+
 Instead of an attribute set, the flake reference can be given as a string.
 
-The flake commands run using krops' own Nix, so flakes don't need to be
-enabled on the deploying machine.  The target only needs `nix-store`.
-Because the copied store paths aren't signed, the target user must be allowed
-to import them, i.e. be `root` or a trusted user.  Targets using `sudo` aren't
-supported.
+The flake commands on the deploying machine run using krops' own Nix, so
+flakes don't need to be enabled there.  Without `fetchOnTarget`, the target
+only needs `nix-store`.  Because the copied store paths aren't signed, the
+target user must be allowed to import them, i.e. be `root` or a trusted user,
+and targets using `sudo` aren't supported.
 
 Example:
 

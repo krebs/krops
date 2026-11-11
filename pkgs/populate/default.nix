@@ -64,10 +64,47 @@ let
   pop.flake = target: source: let
     nix' = "${nix}/bin/nix --extra-experimental-features ${quote "nix-command flakes"}";
     input = source.input or null;
+    inputPath = if input == null then [] else splitString "/" input;
+    fetchOnTarget = source.fetchOnTarget or false;
+    # Caches per-flake information, so it's obtained only once, even if
+    # several sources use the same flake.
+    cached = kind: command: /* sh */ ''
+      cache=$TMPDIR/flake-${kind}.$(
+        printf %s ${quote source.flake} |
+        ${coreutils}/bin/sha256sum |
+        ${coreutils}/bin/cut -c-32
+      ).json
+      if ! test -e "$cache"; then
+        {
+          ${command}
+        } > "$cache"
+      fi
+    '';
+    noInput = /* sh */ ''
+      >&2 printf 'error: flake %s has no input %s\n' \
+          ${quote source.flake} ${quote (toString input)}
+      exit 1
+    '';
     # jq filter selecting the flake or input in nix flake archive's output.
     node =
       if input == null then "."
-      else concatMapStrings (name: ".inputs[${toJSON name}]") (splitString "/" input);
+      else concatMapStrings (name: ".inputs[${toJSON name}]") inputPath;
+    # jq filter selecting the locked input and its own inputs in nix flake
+    # metadata's output, as fetchTree arguments, the input first.
+    locked = /* jq */ ''
+      .locks as $l
+      | def ref($path):
+          reduce $path[] as $name ($l.root;
+            $l.nodes[.].inputs[$name] // error("no input \($name)")
+            | if type == "array" then ref(.) else . end);
+        def deps($key):
+          $key, ($l.nodes[$key].inputs // {} | .[]
+            | if type == "array" then ref(.) else . end
+            | deps(.));
+        ref($input) as $key
+        | [$key] + ([deps($key)] | unique - [$key])
+        | map($l.nodes[.].locked)
+    '';
     sentinel = "${dirOf target.path}/.populate";
     # Directory of garbage collector roots for the input's own inputs.
     inputsRoots = "${sentinel}/flake-inputs/${baseNameOf target.path}";
@@ -109,32 +146,57 @@ let
         rmdir ${quote inputsRoots}
       fi
     '';
+    # Reads fetchTree arguments as JSON array from stdin, fetches them, and
+    # links the results.
+    fetchAndLink = /* sh */ ''
+      set -efu
+      ${requireFlakes "fetching flake inputs on the target"}
+      read -r locked
+      paths=$(LOCKED=$locked nix eval --impure --raw --expr '
+        builtins.concatStringsSep "\n"
+          (map (locked: (builtins.fetchTree locked).outPath)
+            (builtins.fromJSON (builtins.getEnv "LOCKED")))
+      ')
+      printf '%s\n' "$paths" | {
+        ${link}
+      }
+    '';
   in
-    if target.sudo then
-      throw "krops: flake source ${target.path}: targets with sudo are not supported"
-    else /* sh */ ''
+    if fetchOnTarget && input == null then
+      throw "krops: flake source ${target.path}: fetching on the target needs an input"
+    else if !fetchOnTarget && !isLocalTarget target && target.sudo then
+      throw "krops: flake source ${target.path}: copying to targets with sudo is not supported"
+    else if fetchOnTarget then /* sh */ ''
       set -efu
 
-      # Archive each flake only once, even if several sources use it.
-      archive=$TMPDIR/flake-archive.$(
-        printf %s ${quote source.flake} |
-        ${coreutils}/bin/sha256sum |
-        ${coreutils}/bin/cut -c-32
-      ).json
-      if ! test -e "$archive"; then
-        ${nix'} flake archive --json --no-update-lock-file ${quote source.flake} \
-          > "$archive"
+      ${cached "metadata" /* sh */ ''
+        ${nix'} flake metadata --json --no-update-lock-file ${quote source.flake}
+      ''}
+
+      if ! locked=$(
+        ${jq}/bin/jq -ce --argjson input ${quote (toJSON inputPath)} ${quote locked} \
+          "$cache" 2>/dev/null
+      ); then
+        ${noInput}
       fi
 
-      if ! ${jq}/bin/jq -e ${quote "${node} | .path"} "$archive" >/dev/null; then
-        >&2 printf 'error: flake %s has no input %s\n' \
-            ${quote source.flake} ${quote (toString input)}
-        exit 1
+      printf '%s\n' "$locked" | {
+        ${runShell target fetchAndLink}
+      }
+    '' else /* sh */ ''
+      set -efu
+
+      ${cached "archive" /* sh */ ''
+        ${nix'} flake archive --json --no-update-lock-file ${quote source.flake}
+      ''}
+
+      if ! ${jq}/bin/jq -e ${quote "${node} | .path"} "$cache" >/dev/null; then
+        ${noInput}
       fi
 
       # The input followed by its own inputs, which flakes evaluated on the
       # target need as well.
-      paths=$(${jq}/bin/jq -r ${quote "${node} | .. | .path? | strings"} "$archive")
+      paths=$(${jq}/bin/jq -r ${quote "${node} | .. | .path? | strings"} "$cache")
 
       ${optionalString (!isLocalTarget target) /* sh */ ''
         mkdir -p "$PWD"/bin
