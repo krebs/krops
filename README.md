@@ -516,6 +516,22 @@ flakes, as long as the inputs drawing from them are declared with
 `flake = false`.
 
 
+## Tests
+
+`tests/` contains NixOS VM tests for populate: one test per source type, and
+one for features spanning sources, such as flake inputs from sources.  Each
+test deploys every combination of a source type's options to the deploying
+machine itself, to a remote target as `root`, and to a remote target using
+`sudo`, and checks the result after deploying and after deploying again.
+The tests require KVM and nixpkgs with `pkgs.testers.runNixOSTest`
+(23.05 or later), and use `<nixpkgs>` by default.
+
+```sh
+nix-build tests            # all tests
+nix-build tests -A flake   # the test for one source type
+```
+
+
 ## References
 
 - [In-depth example](http://tech.ingolf-wagner.de/nixos/krops/) by [Ingolf Wagner](https://ingolf-wagner.de/)
