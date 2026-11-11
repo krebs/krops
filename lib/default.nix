@@ -82,6 +82,20 @@ let {
         else "\\${c}";
     in {
       quote = x: if x == "" then "''" else lib.stringAsChars quoteChar x;
+
+      # Shell code that enables flakes for the Nix commands following it, and
+      # fails unless Nix supports them, i.e. is version 2.4 or later.  `what`
+      # names what needs flakes, for the error message.
+      requireFlakes = what: /* sh */ ''
+        NIX_CONFIG=$(printf '%s\n%s' "''${NIX_CONFIG-}" \
+            'extra-experimental-features = nix-command flakes')
+        export NIX_CONFIG
+        if ! nix flake --help >/dev/null 2>&1; then
+          >&2 printf 'error: %s needs Nix 2.4 or later on %s, found: %s\n' \
+              ${lib.shell.quote what} "$(uname -n)" "$(nix --version 2>&1 || :)"
+          exit 1
+        fi
+      '';
     };
 
     test = re: x: lib.isString x && lib.testString re x;
