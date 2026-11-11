@@ -77,6 +77,21 @@
     };
   });
 
+  # Inputs of the flake in a source that get drawn from other sources, in the
+  # style of flake.nix, e.g. { nixpkgs.follows = "nixpkgs"; }.
+  flake-inputs = lib.types.attrsOf (lib.types.submodule {
+    options = {
+      follows = lib.mkOption {
+        default = null;
+        type = lib.types.nullOr lib.types.str; # TODO lib.types.label
+      };
+      inputs = lib.mkOption {
+        default = {};
+        type = flake-inputs;
+      };
+    };
+  });
+
   filter = lib.types.submodule {
     options = {
       type = lib.mkOption {
@@ -99,6 +114,10 @@
     };
     file = lib.types.submodule {
       options = {
+        inputs = lib.mkOption {
+          default = {};
+          type = flake-inputs;
+        };
         path = lib.mkOption {
           type = lib.types.absolute-pathname;
         };
@@ -172,6 +191,10 @@
           type = lib.types.bool;
           default = false;
         };
+        inputs = lib.mkOption {
+          default = {};
+          type = flake-inputs;
+        };
         ref = lib.mkOption {
           type = lib.types.str; # TODO lib.types.git.ref
         };
@@ -218,6 +241,10 @@
     };
     symlink = lib.types.submodule {
       options = {
+        inputs = lib.mkOption {
+          default = {};
+          type = flake-inputs;
+        };
         target = lib.mkOption {
           type = lib.types.pathname; # TODO relative-pathname
         };

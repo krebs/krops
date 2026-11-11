@@ -264,6 +264,10 @@ Supported attributes:
   if they exist on the target. This is passed to the `--delete-excluded` option
   of rsync. Defaults to `true`.
 
+* `inputs` (optional) -
+  inputs of the flake in this source to draw from other sources, see
+  [Flake inputs from sources](#flake-inputs-from-sources).
+
 
 ### `flake`
 
@@ -299,6 +303,10 @@ Supported attributes:
   the deploying machine can't be fetched this way.  This requires `input`,
   and Nix with flake support (Nix 2.4 or later) on the target.  Defaults to
   `false`.
+
+* `inputs` (optional) -
+  inputs of the flake in this source to draw from other sources, see
+  [Flake inputs from sources](#flake-inputs-from-sources).
 
 Instead of an attribute set, the flake reference can be given as a string.
 
@@ -338,6 +346,10 @@ Supported attributes:
 * `shallow` (optional)
   boolean that controls whether only the requested commit ref. should be fetched
   instead of the whole history, to save disk space and bandwith. Defaults to `false`.
+
+* `inputs` (optional) -
+  inputs of the flake in this source to draw from other sources, see
+  [Flake inputs from sources](#flake-inputs-from-sources).
 
 
 ### `pass`
@@ -396,6 +408,58 @@ Supported attributes:
 
 * `target` -
   Content of the symlink.  This is typically a relative path.
+
+* `inputs` (optional) -
+  inputs of the flake in this source to draw from other sources, see
+  [Flake inputs from sources](#flake-inputs-from-sources).
+
+
+## Flake inputs from sources
+
+Sources of type `file`, `flake`, `git`, and `symlink` can declare which inputs
+of the flake they contain get drawn from other sources, in the style of
+`flake.nix`, where `follows` names a source instead of an input.  This makes
+flakes on the target use what krops delivers there, much like `NIX_PATH` does
+for Nix expressions.
+
+```nix
+{
+  nixpkgs.flake = {
+    flake = toString ./.;
+    attribute = "nixpkgs";
+  };
+  crate2nix.flake = {
+    flake = "github:nix-community/crate2nix";
+    inputs.nixpkgs.follows = "nixpkgs";
+  };
+  myconf.file = {
+    path = toString ./.;
+    inputs = {
+      crate2nix.follows = "crate2nix";
+      stockholm.inputs.nixpkgs.follows = "nixpkgs";
+    };
+  };
+}
+```
+
+For each source that draws inputs from other sources, populate generates a
+flake in `.populate/flakes/<name>`, which re-exports the outputs of the flake
+in the source, with those inputs drawn from the other sources.  The source
+itself stays as it is, so `NIX_PATH` still refers to it.  When a generated
+flake draws an input from a source that has a generated flake itself, it uses
+that one, so in the example above, myconf's crate2nix uses nixpkgs from the
+`nixpkgs` source as well.  `writeDeploy`'s `flake` parameter uses a source's
+generated flake automatically.
+
+Sources in a Git work tree are referred to as `git+file:` (with submodules if
+there are any), all other sources as `path:`, with symlinks resolved.
+Generated flakes get locked on every run, so their lock files match the
+sources, and get removed once their sources no longer draw inputs from other
+sources.  This requires Nix with flake support (Nix 2.4 or later) on the
+target.  Populating fails if a source that draws inputs from other sources
+contains no `flake.nix`.  Sources that inputs get drawn from don't need to be
+flakes, as long as the inputs drawing from them are declared with
+`flake = false`.
 
 
 ## References

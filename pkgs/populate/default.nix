@@ -40,6 +40,135 @@ let
           ${target.path}/.populate/backup/
     '';
 
+  # Shell code that turns the sentinel file into a directory, which populate
+  # uses for keeping state.  The sentinel only needs to exist.
+  sentinelDirectory = sentinel: /* sh */ ''
+    if test -f ${quote sentinel}; then
+      rm ${quote sentinel}
+      mkdir ${quote sentinel}
+    fi
+  '';
+
+  # Generates a flake for each source that draws inputs from other sources, in
+  # .populate/flakes/<name>.  Each flake re-exports the outputs of the flake in
+  # its source, with those inputs drawn from the other sources' flakes, and
+  # gets locked on every run, so its lock file matches the sources.
+  flakes = target: sources: let
+    flakesDir = "${target.path}/.populate/flakes";
+    generated = filterAttrs (_: source: flakeFollows source != []) sources;
+    names = attrNames generated;
+    drawnFrom = name: map (x: x.source) (flakeFollows generated.${name});
+    sorted = toposort (a: b: elem a (drawnFrom b)) names;
+    # Generated flakes refer to each other's generated flakes, so they don't
+    # need to repeat overrides.
+    url = name:
+      if generated ? ${name}
+        then "path:${flakesDir}/${name}"
+        else "$(flake_url ${quote name})";
+    check = name: source:
+      if source == name then
+        throw "krops: source ${name} draws inputs from itself"
+      else if !(sources ? ${source}) then
+        throw "krops: source ${name} draws inputs from missing source ${source}"
+      else
+        source;
+    flake = name: let
+      follows = flakeFollows generated.${name};
+      drawn = unique (map (x: check name x.source) follows);
+      # Nix ignores overrides below an input that follows another input, so
+      # an input of an input drawn from a source gets overridden at that
+      # source.
+      override = x: let
+        drawnParents = filter
+          (path: any (y: y.path == path) follows)
+          (map (n: take n x.path) (range 1 (length x.path - 1)));
+        parent = if drawnParents == [] then null else last drawnParents;
+        base =
+          if parent == null then name
+          else (findFirst (y: y.path == parent) null follows).source;
+        rest = if parent == null then x.path else drop (length parent) x.path;
+      in
+        "inputs.${toJSON base}" +
+        concatMapStrings (name: ".inputs.${toJSON name}") rest +
+        ".follows = ${toJSON x.source};";
+    in /* sh */ ''
+      (
+        url=$(flake_url ${quote name})
+        ${concatImapStrings (i: source: /* sh */ ''
+          url${toString i}=${url source}
+        '') drawn}
+        rm -fR ${quote "${flakesDir}/${name}"}
+        mkdir ${quote "${flakesDir}/${name}"}
+        cd ${quote "${flakesDir}/${name}"}
+        {
+          echo '{'
+          printf '  inputs.%s.url = "%s";\n' ${quote (toJSON name)} "$url"
+          ${concatImapStrings (i: source: /* sh */ ''
+            printf '  inputs.%s.url = "%s";\n' ${quote (toJSON source)} "$url${toString i}"
+          '') drawn}
+          ${concatMapStrings (x: /* sh */ ''
+            printf '  %s\n' ${quote (override x)}
+          '') follows}
+          printf '  outputs = inputs: inputs.%s;\n' ${quote (toJSON name)}
+          echo '}'
+        } > flake.nix
+        nix flake lock >&2
+      )
+    '';
+  in
+    if sorted ? cycle then
+      throw "krops: sources draw inputs from each other: ${toString sorted.cycle}"
+    else runShell target /* sh */ ''
+      set -efu
+      ${optionalString (names != []) /* sh */ ''
+        ${requireFlakes "drawing flake inputs from sources"}
+
+        # Prints the flake URL of the source named $1.
+        flake_url() {
+          path=$(readlink -f ${quote target.path}/"$1")
+          if ! test -d "$path"; then
+            >&2 printf 'error: source %s is not a directory\n' "$1"
+            exit 1
+          fi
+          if test -e "$path"/.git; then
+            if test -e "$path"/.gitmodules; then
+              printf 'git+file:%s?submodules=1' "$path"
+            else
+              printf 'git+file:%s' "$path"
+            fi
+          else
+            printf 'path:%s' "$path"
+          fi
+        }
+
+        # Inputs can only be drawn into flakes, so check all sources before
+        # generating anything.
+        missing=
+        for name in ${concatMapStringsSep " " quote names}; do
+          if ! test -e ${quote target.path}/"$name"/flake.nix; then
+            missing="$missing $name"
+          fi
+        done
+        if test -n "$missing"; then
+          >&2 printf 'error: source %s draws flake inputs from other sources, but contains no flake.nix\n' $missing
+          exit 1
+        fi
+
+        ${sentinelDirectory "${target.path}/.populate"}
+        mkdir -p ${quote flakesDir}
+        ${concatMapStrings flake sorted.result}
+      ''}
+      # Remove flakes of sources that no longer draw inputs from other sources.
+      if test -d ${quote flakesDir}; then
+        ls -A ${quote flakesDir} | while read -r name; do
+          case ${quote " ${toString names} "} in
+            *" $name "*) ;;
+            *) rm -fR ${quote flakesDir}/"$name" ;;
+          esac
+        done
+      fi
+    '';
+
   pop.derivation = target: source: runShell target /* sh */ ''
     nix-build -E ${quote source.text} -o ${quote target.path} >&2
   '';
@@ -119,11 +248,7 @@ let
       fi
       nix-store --realise "$path" --add-root ${quote target.path} --indirect >/dev/null
 
-      # The sentinel only needs to exist, so it can become a directory.
-      if test -f ${quote sentinel}; then
-        rm ${quote sentinel}
-        mkdir ${quote sentinel}
-      fi
+      ${sentinelDirectory sentinel}
       mkdir -p ${quote inputsRoots}
       roots=
       while read -r path; do
@@ -453,6 +578,7 @@ writers.writeDash "populate.${target.host}" ''
   set -x
   ${optionalString backup (do-backup { inherit target; })}
   ${concatStringsSep "\n" (mapAttrsToList (populate target) source)}
+  ${flakes target source}
 
   ${ssh' target} -q -O stop ${quote target.host}
 ''
