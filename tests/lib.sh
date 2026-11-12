@@ -19,14 +19,21 @@ nix() {
 }
 
 # Evaluates a flake output without network access to the fixtures, so all
-# inputs must be in the store.
+# inputs must be in the store.  An empty cache directory keeps Nix from
+# restoring inputs from its fetcher cache.
 nix_eval() {
+  nix_eval_cache=$(mktemp -d)
+  nix_eval_status=0
   env \
+      XDG_CACHE_HOME="$nix_eval_cache" \
       http_proxy=http://127.0.0.1:9 https_proxy=http://127.0.0.1:9 \
       HTTP_PROXY=http://127.0.0.1:9 HTTPS_PROXY=http://127.0.0.1:9 \
       all_proxy=http://127.0.0.1:9 ALL_PROXY=http://127.0.0.1:9 \
       no_proxy= NO_PROXY= \
-    nix --extra-experimental-features 'nix-command flakes' eval --raw "$@"
+    nix --extra-experimental-features 'nix-command flakes' eval --raw "$@" ||
+    nix_eval_status=$?
+  rm -fR "$nix_eval_cache"
+  return "$nix_eval_status"
 }
 
 # Evaluates a flake output, fetching missing inputs.

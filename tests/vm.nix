@@ -8,16 +8,19 @@ let
 
   sshKeys = import (pkgs.path + "/nixos/tests/ssh-keys.nix") pkgs;
 
+  script = name: text: if text == null then null else pkgs.writeText name text;
+
   # The scenarios as JSON, with scripts as files.
   plan = pkgs.writeText "krops-test-${name}.json" (builtins.toJSON (map
     (scenario: scenario // {
       prepare = pkgs.writeText "prepare" scenario.prepare;
+      prepareDeployer = script "prepare-deployer" scenario.prepareDeployer;
       phases = map
         (phase: phase // {
           check = pkgs.writeText "check" phase.check;
-          mutate =
-            if phase.mutate == null then null
-            else pkgs.writeText "mutate" phase.mutate;
+          mutate = script "mutate" phase.mutate;
+          checkDeployer = script "check-deployer" phase.checkDeployer;
+          mutateDeployer = script "mutate-deployer" phase.mutateDeployer;
         })
         scenario.phases;
     })
@@ -125,9 +128,18 @@ in pkgs.testers.runNixOSTest {
         node = nodes[scenario["node"]]
         try:
             with subtest(scenario["name"]):
+                if scenario["isolate"]:
+                    for machine in nodes.values():
+                        run(machine, "rm -fR /var/krops && nix-store --gc >/dev/null")
+                if scenario["prepareDeployer"] is not None:
+                    run(deployer, f"sh {scenario['prepareDeployer']}")
                 run(node, f"sh {scenario['prepare']}")
                 for i, phase in enumerate(scenario["phases"]):
-                    status, out = deployer.execute(f"HOME=/root {phase['populate']} 2>&1")
+                    # A hang fails the scenario, not the whole test.
+                    status, out = deployer.execute(
+                        f"HOME=/root timeout 600 {phase['populate']} 2>&1",
+                        timeout=900,
+                    )
                     if phase["expect"] is None:
                         if status != 0:
                             raise Exception(f"populate {i} fails:\n{out}")
@@ -136,8 +148,12 @@ in pkgs.testers.runNixOSTest {
                             f"populate {i} doesn't fail with {phase['expect']!r}:\n{out}"
                         )
                     run(node, f"KROPS_TEST_GC=1 sh {phase['check']}")
+                    if phase["checkDeployer"] is not None:
+                        run(deployer, f"sh {phase['checkDeployer']}")
                     if phase["mutate"] is not None:
                         run(node, f"sh {phase['mutate']}")
+                    if phase["mutateDeployer"] is not None:
+                        run(deployer, f"sh {phase['mutateDeployer']}")
         except Exception as e:
             print(f"scenario {scenario['name']} fails: {e}")
             failed.append(scenario["name"])

@@ -62,37 +62,57 @@ let
   alt = { alt.file = "/fixtures/alt"; };
 
   # Builds a scenario from a name, a target kind, and phases with sources.
-  scenario = { name, targetKind, node ? null, prepare ? "", phases }: let
+  # Isolated scenarios start with no target directories and a collected store
+  # on both machines, so no other scenario's store paths or roots stand in for
+  # missing ones.
+  scenario = {
+    name, targetKind, node ? null, isolate ? false,
+    prepare ? "", prepareDeployer ? null, phases,
+  }: let
     path = "/var/krops/${name}";
     target = targets.${targetKind} path;
     vars = "T=${path}\n";
+    # A phase expecting evaluation to fail has a control: sources that
+    # differ only in what makes evaluation fail, or a function returning them
+    # for the phase's sources, and that must evaluate.  So the phase doesn't
+    # pass for failing for an unrelated reason, e.g. a misspelt option.
     phase = {
       sources, prune ? false, deploy ? null,
-      expect ? "success", check ? "", mutate ? null,
+      expect ? "success", control ? null,
+      check ? "", mutate ? null, checkDeployer ? null, mutateDeployer ? null,
     }: let
-      args = {
-        source = krops.evalSource [ sources ];
-        inherit prune target;
-        force = true;
-      };
-      command =
+      command = sources: let
+        args = {
+          source = krops.evalSource [ sources ];
+          inherit prune target;
+          force = true;
+        };
+      in
         if deploy == null then populate args
         else writeDeploy "deploy" (args // { useNixOutputMonitor = false; } // deploy);
-      evaluated = builtins.tryEval (builtins.seq (toString command) true);
+      evaluates = sources:
+        (builtins.tryEval (builtins.seq (toString (command sources)) true)).success;
+      script = text: if text == null then null else prelude + vars + text;
     in
       if expect == "eval-error" then
-        if evaluated.success then
+        if control == null then
+          throw "scenario ${name}: expecting evaluation to fail needs a control"
+        else if evaluates sources then
           throw "scenario ${name}: populate evaluates, but is expected to fail"
+        else if !evaluates (if lib.isFunction control then control sources else control) then
+          throw "scenario ${name}: the control doesn't evaluate either"
         else
           null
       else {
-        populate = toString command;
+        populate = toString (command sources);
         expect = if expect == "success" then null else expect.fail;
-        check = prelude + vars + check;
-        mutate = if mutate == null then null else prelude + vars + mutate;
+        check = script check;
+        mutate = script mutate;
+        checkDeployer = script checkDeployer;
+        mutateDeployer = script mutateDeployer;
       };
   in {
-    inherit name;
+    inherit name isolate;
     node =
       if node != null then node
       else if targetKind == "local" then "deployer"
@@ -100,6 +120,8 @@ let
     prepare = prelude + vars + ''
       rm -fR "$T"
     '' + prepare;
+    prepareDeployer =
+      if prepareDeployer == null then null else prelude + vars + prepareDeployer;
     phases = lib.filter (x: x != null) (map phase phases);
   };
 
@@ -145,7 +167,19 @@ let
   copyingWithSudo = flags: ctx:
     ctx.targetKind == "sudo" && !(flags.fetchOnTarget or false);
 
-in {
+  # The sources with fetchOnTarget set for all flake and flake-input sources,
+  # the control for copying flakes to targets using sudo.
+  withFetchOnTarget = lib.mapAttrs (_: lib.mapAttrs (type: options:
+    if lib.elem type [ "flake" "flake-input" ]
+      then options // { fetchOnTarget = true; }
+      else options));
+
+in
+
+# The remote target must not count as local wherever this gets evaluated.
+assert !(krops.isLocalTarget (targets.remote "/"));
+
+{
 
   derivation = matrix "derivation" {} (_: _: {
     phases = twice {
@@ -255,6 +289,7 @@ in {
   in
     # The flake in a subdirectory has no inputs to draw from sources.
     if flags.kind == "subdir" && flags.inputs then null else {
+    isolate = true;
     phases = twice ({
       sources = {
         x.flake = {
@@ -265,6 +300,7 @@ in {
       } // optionalAttrs flags.inputs alt;
     } // (if copyingWithSudo flags ctx then {
       expect = "eval-error";
+      control = withFetchOnTarget;
     } else {
       check = if flags.kind == "subdir" then checkFlake {
         attr = "who"; expected = "sub"; subdir = true;
@@ -282,6 +318,7 @@ in {
     }) (flags: ctx: let
       inputs = flags.inputs or false;
     in {
+      isolate = true;
       phases = twice ({
         sources = {
           x.flake-input = {
@@ -293,6 +330,7 @@ in {
         } // optionalAttrs inputs alt;
       } // (if copyingWithSudo flags ctx then {
         expect = "eval-error";
+        control = withFetchOnTarget;
       } else {
         check = {
           dep = checkFlake {
@@ -472,7 +510,11 @@ in {
 
   # Features spanning several sources.
   features = concatMap (targetKind: let
-    s = name: args: scenario ({ name = "${name}-${targetKind}"; inherit targetKind; } // args);
+    s = name: args: scenario ({
+      name = "${name}-${targetKind}";
+      inherit targetKind;
+      isolate = true;
+    } // args);
     copying = targetKind != "sudo";
     fetchOnTarget = !copying;
   in [
@@ -602,18 +644,29 @@ in {
           b.file = { path = "/fixtures/alt"; inputs.foo.follows = "a"; };
         };
         expect = "eval-error";
+        control = {
+          a.file = { path = "/fixtures/alt"; inputs.foo.follows = "b"; };
+          b.file = "/fixtures/alt";
+        };
       }];
     })
     (s "self" {
       phases = [{
         sources.a.file = { path = "/fixtures/alt"; inputs.foo.follows = "a"; };
         expect = "eval-error";
+        control = alt // {
+          a.file = { path = "/fixtures/alt"; inputs.foo.follows = "alt"; };
+        };
       }];
     })
     (s "missing" {
       phases = [{
         sources.a.file = { path = "/fixtures/alt"; inputs.foo.follows = "nope"; };
         expect = "eval-error";
+        control = {
+          a.file = { path = "/fixtures/alt"; inputs.foo.follows = "nope"; };
+          nope.file = "/fixtures/alt";
+        };
       }];
     })
     (s "noflake" {
