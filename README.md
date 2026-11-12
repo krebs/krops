@@ -147,6 +147,10 @@ Built packages will be uploaded from the `buildTarget` to `target` directly
 This requires the building machine to have ssh access to the target.
 To build the system on the same machine, that runs the krops command,
 set up a local ssh service and set the build host to localhost.
+`nixos-rebuild` can't be told the ports of `buildTarget` and `target`, so their
+`port` attributes apply only to syncing the sources.  If both use the same
+non-default port, set `NIX_SSHOPTS="-p PORT"` when deploying, so
+`nixos-rebuild` uses it as well.
 
 ### `crossDeploy` (optional, defaults to false)
 
