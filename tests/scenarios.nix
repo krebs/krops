@@ -843,6 +843,30 @@ assert !(krops.isLocalTarget (targets.remote "/"));
         }
       ];
     })
+    # The ssh master stops, after failing as well as after succeeding.
+    (s "ssh-master" (let
+      checkDeployer = ''
+        for i in 1 2 3 4 5 6 7 8 9 10; do
+          if ! pgrep -f 'ssh: .*/populate\..*\[mux\]' >/dev/null; then
+            exit 0
+          fi
+          sleep 0.5
+        done
+        fail "ssh master remains"
+      '';
+    in {
+      phases = [
+        {
+          sources.x.flake-input = { flake = "/fixtures/top"; name = "nope"; inherit fetchOnTarget; };
+          expect.fail = "error: flake /fixtures/top has no input nope";
+          inherit checkDeployer;
+        }
+        {
+          sources = alt;
+          inherit checkDeployer;
+        }
+      ];
+    }))
   ] ++ lib.optional (targetKind == "local")
     # The target has the path the input is locked to.
     (s "uselocal" {

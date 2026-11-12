@@ -867,7 +867,14 @@ writers.writeDash "populate.${target.host}" ''
   TMPDIR=$(${coreutils}/bin/mktemp -dt populate.XXXXXXXX)
   readonly TMPDIR # Ensure the trap will delete the correct thing.
   export TMPDIR # Share it with the jobs and the ssh wrapper.
-  trap 'rm -R "$TMPDIR"' EXIT
+  # Stops the ssh master, if any source started one, also after failures,
+  # before its control socket goes away with $TMPDIR.
+  stop_ssh_master() {
+    if ${ssh' target} -q -O check ${quote target.host} 2>/dev/null; then
+      ${ssh' target} -q -O stop ${quote target.host}
+    fi
+  }
+  trap 'stop_ssh_master; rm -R "$TMPDIR"' EXIT
 
   ${check { inherit force target; }}
   set -x
@@ -876,8 +883,4 @@ writers.writeDash "populate.${target.host}" ''
   ${flakes target source}
   ${optionalString prune (prune' target source)}
 
-  # Stop the ssh master, if any source started one.
-  if ${ssh' target} -q -O check ${quote target.host} 2>/dev/null; then
-    ${ssh' target} -q -O stop ${quote target.host}
-  fi
 ''
