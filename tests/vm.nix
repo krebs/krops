@@ -14,6 +14,8 @@ let
   plan = pkgs.writeText "krops-test-${name}.json" (builtins.toJSON (map
     (scenario: scenario // {
       prepare = pkgs.writeText "prepare" scenario.prepare;
+      canarySetup = pkgs.writeText "canary-setup" scenario.canarySetup;
+      canaryCheck = pkgs.writeText "canary-check" scenario.canaryCheck;
       prepareDeployer = script "prepare-deployer" scenario.prepareDeployer;
       phases = map
         (phase: phase // {
@@ -130,6 +132,9 @@ in pkgs.testers.runNixOSTest {
         run(deployer, "HOME=/root sh ${./fixtures.sh} http://deployer:8000 ${gitHead}")
 
     failed = []
+    # The canaries get created at the start, after isolating, which removes
+    # some, and after a failure, which may have changed some.
+    canaries = False
     for scenario in plan:
         node = nodes[scenario["node"]]
         try:
@@ -137,6 +142,10 @@ in pkgs.testers.runNixOSTest {
                 if scenario["isolate"]:
                     for machine in nodes.values():
                         run(machine, "rm -fR /var/krops && nix-store --gc >/dev/null")
+                if scenario["isolate"] or not canaries:
+                    for machine in nodes.values():
+                        run(machine, f"sh {scenario['canarySetup']}")
+                    canaries = True
                 if scenario["prepareDeployer"] is not None:
                     run(deployer, f"sh {scenario['prepareDeployer']}")
                 run(node, f"sh {scenario['prepare']}")
@@ -160,9 +169,14 @@ in pkgs.testers.runNixOSTest {
                         run(node, f"sh {phase['mutate']}")
                     if phase["mutateDeployer"] is not None:
                         run(deployer, f"sh {phase['mutateDeployer']}")
+                # Each phase's check covers the canaries of its machine.
+                for machine in nodes.values():
+                    if machine is not node:
+                        run(machine, f"sh {scenario['canaryCheck']}")
         except Exception as e:
             print(f"scenario {scenario['name']} fails: {e}")
             failed.append(scenario["name"])
+            canaries = False
 
     if failed:
         raise Exception(f"{len(failed)} scenarios fail: {' '.join(failed)}")

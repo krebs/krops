@@ -48,3 +48,67 @@ gc() {
     nix-store --gc >/dev/null
   fi
 }
+
+# Canaries are files outside the target directories, which populate must
+# never change, whatever the target directories contain.  Some scenarios
+# point links at them.  The manifest lists every entry with its type, mode,
+# and link target, and every file with its checksum.
+canary_manifest() {
+  {
+    find /var/krops/canary /var/krops/sibling /var/krops-outside \
+        -printf '%y %m %p -> %l\n'
+    find /var/krops/canary /var/krops/sibling /var/krops-outside \
+        -type f -exec sha256sum {} +
+  } 2>&1 | sort
+}
+
+# Creates the canaries, unless they are there unchanged: a file beside the
+# target directories, a directory beside them, and a directory elsewhere
+# with files, a read-only directory, and a Git work tree with a changed and
+# an untracked file, which resetting and cleaning would lose.
+canary_setup() {
+  if test -e /var/krops-outside.manifest &&
+      canary_manifest | cmp -s - /var/krops-outside.manifest; then
+    return
+  fi
+  rm -fR /var/krops/canary /var/krops/sibling /var/krops-outside
+  mkdir -p /var/krops/sibling /var/krops-outside/dir/sub
+  echo canary > /var/krops/canary
+  echo sibling > /var/krops/sibling/file
+  echo outside > /var/krops-outside/file
+  echo outside > /var/krops-outside/dir/file
+  echo outside > /var/krops-outside/dir/sub/file
+  chmod a-w /var/krops-outside/dir/sub/file /var/krops-outside/dir/sub
+  git init -q /var/krops-outside/repo
+  (
+    cd /var/krops-outside/repo
+    echo tracked > tracked
+    git add tracked
+    GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 \
+      git -c user.name=krops -c user.email=spam@krebsco.de commit -q -m canary
+    echo changed > tracked
+    echo untracked > untracked
+  )
+  canary_manifest > /var/krops-outside.manifest
+}
+
+# Fails if a canary changed, or if a store path that an entry of the target
+# directory $T links to doesn't match its hash anymore.
+canary_check() {
+  if ! canary_manifest | cmp -s - /var/krops-outside.manifest; then
+    canary_manifest | diff /var/krops-outside.manifest - >&2 || :
+    fail "something outside the target directory changed"
+  fi
+  if test -n "${T-}" && test -d "$T"; then
+    ls -A "$T" | while IFS= read -r canary_name; do
+      canary_link=$(readlink "$T/$canary_name" 2>/dev/null) || continue
+      case $canary_link in
+        /nix/store/*)
+          nix-store --verify-path \
+              "$(printf '%s\n' "$canary_link" | cut -d/ -f1-4)" ||
+            fail "$T/$canary_name links to a store path that changed"
+          ;;
+      esac
+    done
+  fi
+}

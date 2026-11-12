@@ -1,6 +1,6 @@
 # NixOS VM tests for populate: one test per source type, one for features
-# spanning sources, one for edge cases of flakes, and one for writeDeploy's
-# arguments to nixos-rebuild.  Build all with nix-build tests, or one with,
+# spanning sources, one for edge cases of flakes, one for staying inside the
+# target directory, and one for writeDeploy's arguments to nixos-rebuild.  Build all with nix-build tests, or one with,
 # e.g., nix-build tests -A flake.  jq runs populate's jq programs for flakes
 # without VMs.
 { pkgs ? import ../pkgs {} }:

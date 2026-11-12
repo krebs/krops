@@ -290,6 +290,29 @@ pkgs.krops.writeCommand "deploy-with-swap" {
 whether the ssh session should do a pseudo-terminal allocation.
 sets `-t` on the ssh command.
 
+## The target directory
+
+Populate owns the target directory, `/var/src` by default: it replaces
+whatever is at the target path of a source, and with `prune` it removes
+everything else.  It doesn't change or remove anything outside:
+
+* Target paths must be absolute, must not be the root directory, and must not
+  contain `..`.  Source names must be file names other than `.`, `..`, and
+  `.populate`, without slashes and control characters.  Anything else fails
+  when evaluating.
+
+* A symlink at the target path of a source gets replaced by what the source
+  delivers, not followed, and populate says so.  To keep a source elsewhere,
+  e.g. on another disk or in memory, mount that place at the target path, or
+  make the target directory itself a symlink.  A Git work tree whose `.git`
+  is a symlink, or a file naming a repository elsewhere, gets replaced by a
+  `git` source as well.
+
+* Populate keeps its state in the sentinel, `.populate`, which becomes a
+  directory once there is state to keep.  Populating fails if the sentinel,
+  or a directory populate needs therein, is a symlink.
+
+
 ## Source Types
 
 ### `derivation`
@@ -658,8 +681,10 @@ flakes, as long as the inputs drawing from them are declared with
 
 `tests/` contains NixOS VM tests for populate: one test per source type, one
 for features spanning sources, such as flake inputs from sources, one for edge
-cases of flakes, such as unusual lock files, and one for the arguments
-`writeDeploy` passes to `nixos-rebuild`.  The tests deploy every combination
+cases of flakes, such as unusual lock files, one for staying inside the target
+directory, whatever links it contains, and one for the arguments `writeDeploy`
+passes to `nixos-rebuild`.  After every deploy, all tests check that nothing
+outside the target directory changed.  The tests deploy every combination
 of a source type's options, except for patches, which the features test
 covers, to the deploying machine itself, to a remote target
 as `root`, and to a remote target using `sudo`, and check the result after

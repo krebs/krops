@@ -4,9 +4,119 @@ with shell;
 { coreutils, dash, findutils, git, jq, nix, openssh, pass, passage, rsync, writers }:
 
 let
+  # Populate replaces and removes what's at the target paths of sources, so
+  # it refuses names that lead out of the target directory, to the directory
+  # itself, or to its own state.
+  checkSourceName = name:
+    if elem name [ "" "." ".." ".populate" ] ||
+        builtins.match "[^/[:cntrl:]]+" name == null then
+      throw "krops: source name ${toJSON name} can't be used: it must be a file name other than ., .., and .populate, without slashes and control characters"
+    else
+      true;
+
+  # Populate removes what it finds in the target directory, so it refuses
+  # paths that aren't absolute, that are the root directory, or that the
+  # target would resolve to another directory than the one they name.
+  checkTargetPath = path: let
+    components = filter (x: x != "" && x != ".") (splitString "/" path);
+  in
+    if !isString path || substring 0 1 path != "/" then
+      throw "krops: target path ${toJSON path} can't be used: it must be absolute"
+    else if components == [] then
+      throw "krops: target path ${toJSON path} can't be used: it must not be the root directory"
+    else if elem ".." components ||
+        builtins.match "[^[:cntrl:]]+" path == null then
+      throw "krops: target path ${toJSON path} can't be used: it must not contain .. or control characters"
+    else
+      true;
+
+  # The directories below the sentinel, once that is a directory, which
+  # have a directory for each source that needs one.  Besides, there is
+  # backup, which holds copies of the sources.
+  stateKinds = [ "derived" "flake-inputs" "flake-uploads" "flakes" "patches" ];
+
+  # Shell code that prepares keeping state below the sentinel for the sources
+  # named names.  The sentinel only needs to exist, so it may be a file,
+  # which becomes a directory.  Populate changes and removes what's in its
+  # state directories, and a symlink in place of one would make it do that to
+  # whatever the link points to, so it refuses to use those.
+  useState = sentinel: names: /* sh */ ''
+    refuse_link() {
+      if test -L "$1"; then
+        >&2 printf 'error: %s is a symlink, but populate needs a directory of its own there\n' "$1"
+        exit 1
+      fi
+    }
+    refuse_link ${quote sentinel}
+    refuse_link ${quote sentinel}/backup
+    for state_kind in ${toString stateKinds}; do
+      refuse_link ${quote sentinel}/"$state_kind"
+      for state_name in ${concatMapStringsSep " " quote names}; do
+        refuse_link ${quote sentinel}/"$state_kind"/"$state_name"
+      done
+    done
+    if test -f ${quote sentinel}; then
+      rm ${quote sentinel}
+      mkdir ${quote sentinel}
+    fi
+  '';
+
+  # Shell code that removes what's at path, a shell word, with everything
+  # below it, also what isn't writable.  A symlink gets removed itself,
+  # instead of followed.
+  removeTree = path: /* sh */ ''
+    if test -L ${path}; then
+      rm ${path}
+    elif test -e ${path}; then
+      chmod -R u+w ${path}
+      rm -fR ${path}
+    fi
+  '';
+
+  # Shell code that removes a symlink at path, saying so, because the link
+  # may be there on purpose, but populate never follows it: what a source
+  # delivers would change or remove what the link points to.
+  removeLink = path: /* sh */ ''
+    if test -L ${quote path}; then
+      >&2 printf 'replacing symlink %s, which points to %s\n' \
+          ${quote path} "$(readlink ${quote path})"
+      rm ${quote path}
+    fi
+  '';
+
+  # Shell code that removes a symlink at path like removeLink does, unless
+  # it points into the store, like the links populate puts there itself.
+  removeForeignLink = path: /* sh */ ''
+    if test -L ${quote path}; then
+      case $(readlink ${quote path}) in
+        /nix/store/*) ;;
+        *)
+          ${removeLink path}
+          ;;
+      esac
+    fi
+  '';
+
+  # Shell code that makes room at path for a link into the store, which Nix
+  # only puts in place of another link into the store.
+  makeRoomForLink = path: /* sh */ ''
+    ${removeForeignLink path}
+    if ! test -L ${quote path} && test -e ${quote path}; then
+      rm -fR ${quote path}
+    fi
+  '';
+
   check = { force, target }: let
     sentinelFile = "${target.path}/.populate";
   in runShell target /* sh */ ''
+    # Before anything touches it, which would touch what it points to.
+    if test -L ${quote sentinelFile}; then
+      >&2 printf 'error: sentinel file is a symlink: %s\n' ${quote (
+        optionalString (!isLocalTarget target) "${target.host}:" +
+        sentinelFile
+      )}
+      exit 1
+    fi
     ${optionalString force /* sh */ ''
       mkdir -vp ${quote (dirOf sentinelFile)} >&2
       touch ${quote sentinelFile}
@@ -24,6 +134,7 @@ let
     sentinelFile = "${target.path}/.populate";
   in
     runShell target /* sh */ ''
+      ${useState sentinelFile []}
       if ! test -d ${quote sentinelFile}; then
         >&2 printf 'error: sentinel file is not a directory: %s\n' ${quote (
           optionalString (!isLocalTarget target) "${target.host}:" +
@@ -36,18 +147,9 @@ let
           --delete \
           --exclude /.populate \
           --link-dest=${quote target.path} \
-          ${target.path}/ \
-          ${target.path}/.populate/backup/
+          ${quote target.path}/ \
+          ${quote target.path}/.populate/backup/
     '';
-
-  # Shell code that turns the sentinel file into a directory, which populate
-  # uses for keeping state.  The sentinel only needs to exist.
-  sentinelDirectory = sentinel: /* sh */ ''
-    if test -f ${quote sentinel}; then
-      rm ${quote sentinel}
-      mkdir ${quote sentinel}
-    fi
-  '';
 
   # Draws inputs of flakes in sources from other sources, and derives what the
   # target paths of flake and flake-input sources that get patched, get their
@@ -85,9 +187,11 @@ let
     # Shell word for the URL of the flake that inputs drawn from a source use:
     # its generated flake, if it has one, so overrides don't need to be
     # repeated, or else the flake in the source.
+    # Nix refuses path: URLs with symlinks on the way, which the target
+    # directory may be, so paths get resolved.
     url = name:
       if generated ? ${name}
-        then quote "path:${flakesDir}/${name}"
+        then ''"path:$(readlink -f ${quote "${flakesDir}/${name}"})"''
         else ''"$(flake_url ${quote name})"'';
     check = name: source:
       if source == name then
@@ -108,6 +212,7 @@ let
     rewrite = name: /* sh */ ''
       (
         ${overrideArgs name}
+        own_lock "$(readlink -f ${quote "${target.path}/${name}"})"
         nix flake lock "$@" "$(flake_url ${quote name})" >&2
       )
     '';
@@ -143,12 +248,7 @@ let
       '';
       # Removes the work directory, which an interrupted run may have left
       # behind.
-      removeWork = /* sh */ ''
-        if test -e ${quote "${dir}/work"}; then
-          chmod -R u+w ${quote "${dir}/work"}
-          rm -fR ${quote "${dir}/work"}
-        fi
-      '';
+      removeWork = removeTree (quote "${dir}/work");
     in /* sh */ ''
       (
         original=$(readlink -f ${quote "${dir}/original"})
@@ -192,12 +292,14 @@ let
               cd ${quote "${dir}/work"}
               ${applyPatches}
             )
+            ${removeForeignLink targetPath}
             rm -fR ${quote targetPath}
             mv ${quote "${dir}/work"} ${quote targetPath}
             printf '%s\n' "$key" > ${quote "${dir}/key"}
           fi
           ${optionalString rewriteLock /* sh */ ''
             ${overrideArgs name}
+            own_lock ${quote targetPath}
             nix flake lock "$@" "$(flake_url ${quote name})" >&2
           ''}
         '' else /* sh */ ''
@@ -208,8 +310,8 @@ let
             :
           else
             # The copy keeps the name of the delivered store path.
-            work=${quote "${dir}/work"}/$(basename "$path" | cut -c34-)
             mkdir ${quote "${dir}/work"}
+            work=$(readlink -f ${quote "${dir}/work"})/$(basename "$path" | cut -c34-)
             cp -R "$path" "$work"
             chmod -R u+w "$work"
             (
@@ -228,9 +330,7 @@ let
                 --add-root ${quote "${dir}/result"} --indirect >/dev/null
             printf '%s\n' "$key" > ${quote "${dir}/key"}
           fi
-          if test -d ${quote targetPath} && ! test -L ${quote targetPath}; then
-            rm -fR ${quote targetPath}
-          fi
+          ${makeRoomForLink targetPath}
           # .populate/derived/<name>/result roots the store path.
           ln -fns "$result''${subdir:+/$subdir}" ${quote targetPath}
         ''}
@@ -286,7 +386,7 @@ let
           echo '}'
         } > flake.nix
         # Not just ., which Nix takes for the enclosing Git work tree, if any.
-        nix flake lock ${quote "path:${flakesDir}/${name}"} >&2
+        nix flake lock "path:$(pwd -P)" >&2
       )
     '';
     process = name:
@@ -301,8 +401,7 @@ let
           case ${quote " ${toString names} "} in
             *" $name "*) ;;
             *)
-              chmod -R u+w ${quote dir}/"$name"
-              rm -fR ${quote dir}/"$name"
+              ${removeTree ''${quote dir}/"$name"''}
               ;;
           esac
         done
@@ -316,9 +415,21 @@ let
       throw "krops: sources draw inputs from each other: ${toString sorted.cycle}"
     else runShell target /* sh */ ''
       set -efu
+      ${useState sentinel (attrNames sources)}
       ${optionalString (names != []) /* sh */ ''
         ${optionalString (drawing != {})
           (requireFlakes "drawing flake inputs from sources")}
+
+        # Nix rewrites lock files in place, which also changes what else is
+        # a hard link to the lock file, e.g. in a backup, or what it is a
+        # symlink to.  So the lock file of the flake in the directory $1
+        # gets replaced by a copy first.
+        own_lock() {
+          if test -e "$1"/flake.lock; then
+            cp -p "$1"/flake.lock "$1"/flake.lock.populate
+            mv -f "$1"/flake.lock.populate "$1"/flake.lock
+          fi
+        }
 
         # Prints the flake URL of the source named $1.
         flake_url() {
@@ -356,7 +467,6 @@ let
         fi
 
         ${optionalString (generated != {}) /* sh */ ''
-          ${sentinelDirectory sentinel}
           mkdir -p ${quote flakesDir}
         ''}
         ${concatMapStrings process sorted.result}
@@ -388,6 +498,7 @@ let
       sources);
   in runShell target /* sh */ ''
     set -efu
+    ${useState "${target.path}/.populate" []}
     cd ${quote target.path}
     ls -A | while read -r name; do
       case $name in
@@ -410,13 +521,11 @@ let
         rmdir "$roots"
       fi
     fi
-    if test -e .populate/flake-uploads; then
-      chmod -R u+w .populate/flake-uploads
-      rm -fR .populate/flake-uploads
-    fi
+    ${removeTree ".populate/flake-uploads"}
   '';
 
   pop.derivation = target: source: runShell target /* sh */ ''
+    ${makeRoomForLink target.path}
     nix-build -E ${quote source.text} -o ${quote target.path} >&2
   '';
 
@@ -463,7 +572,7 @@ let
       '') patches}
       ${runShell target /* sh */ ''
         set -efu
-        ${sentinelDirectory sentinel}
+        ${useState sentinel [ name ]}
         mkdir -p ${quote "${sentinel}/patches"}
       ''}
       ${rsync' (target // { path = "${sentinel}/patches/${name}"; })
@@ -533,10 +642,7 @@ let
     uploads = "${sentinel}/flake-uploads";
     upload = "${uploads}/${name}";
     removeUpload = /* sh */ ''
-      if test -e ${quote upload}; then
-        chmod -R u+w ${quote upload}
-        rm -fR ${quote upload}
-      fi
+      ${removeTree (quote upload)}
       # Sources get populated one after another, so no other source uses the
       # directory meanwhile.
       if test -d ${quote uploads} && test -z "$(ls -A ${quote uploads})"; then
@@ -552,26 +658,17 @@ let
       set -efu
       read -r dir
       read -r path
+      ${useState sentinel [ name ]}
       ${optionalString derived /* sh */ ''
-        ${sentinelDirectory sentinel}
         mkdir -p ${quote (dirOf linkPath)}
       ''}
-      # nix-store --add-root only replaces links into the store.
-      if test -L ${quote linkPath}; then
-        case $(readlink ${quote linkPath}) in
-          /nix/store/*) ;;
-          *) rm ${quote linkPath} ;;
-        esac
-      elif test -e ${quote linkPath}; then
-        rm -fR ${quote linkPath}
-      fi
+      ${makeRoomForLink linkPath}
       nix-store --realise "$path" --add-root ${quote linkPath} --indirect >/dev/null
       # The garbage collector follows the link into the store path.
       if test -n "$dir"; then
         ln -fns "$path/$dir" ${quote linkPath}
       fi
 
-      ${sentinelDirectory sentinel}
       # Left behind by an interrupted run, or not needed anymore.
       ${removeUpload}
       mkdir -p ${quote inputsRoots}
@@ -742,7 +839,7 @@ let
               }; then
                 ${runShell target /* sh */ ''
                   set -efu
-                  ${sentinelDirectory sentinel}
+                  ${useState sentinel [ name ]}
                   ${removeUpload}
                   mkdir -p ${quote upload}
                 ''}
@@ -792,8 +889,13 @@ let
   pop.git = target: source: runShell target /* sh */ ''
     set -efu
     # Remove target path if it doesn't look like a git worktree.
-    # This can happen e.g. when it had a different type earlier.
-    if ! test -e ${quote target.path}/.git; then
+    # This can happen e.g. when it had a different type earlier.  A work
+    # tree that a symlink points to, or whose .git is a symlink or a file
+    # naming a repository elsewhere, isn't populate's own: fetching,
+    # resetting, and cleaning would change what's elsewhere.
+    ${removeLink target.path}
+    if test -L ${quote target.path}/.git ||
+        ! test -d ${quote target.path}/.git; then
       rm -fR ${quote target.path}
     fi
     if ! test -e ${quote target.path}; then
@@ -955,11 +1057,7 @@ let
   rsync' = target: config: sourcePath: /* sh */ ''
     # rsync writes through a symlink at the target path, e.g. one a symlink or
     # flake source left there, into what it points to.
-    ${runShell target /* sh */ ''
-      if test -L ${quote target.path}; then
-        rm ${quote target.path}
-      fi
-    ''}
+    ${runShell target (removeLink target.path)}
     source_path=${sourcePath}
     if test -d "$source_path"; then
       source_path=$source_path/
@@ -1088,6 +1186,8 @@ let
 in
 
 { backup ? false, force ? false, prune ? false, source, target }:
+assert checkTargetPath target.path;
+assert all checkSourceName (attrNames source);
 writers.writeDash "populate.${target.host}" ''
   set -efu
 

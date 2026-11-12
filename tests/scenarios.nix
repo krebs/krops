@@ -94,37 +94,49 @@ let
     # differ only in what makes evaluation fail, or a function returning them
     # for the phase's sources, and that must evaluate.  So the phase doesn't
     # pass for failing for an unrelated reason, e.g. a misspelt option.
+    # targetPath deploys to another path than the scenario's target
+    # directory, and controlTargetPath is the control for a path that makes
+    # evaluation fail.
     phase = {
-      sources, prune ? false, deploy ? null,
-      expect ? "success", control ? null,
+      sources, backup ? false, prune ? false, deploy ? null,
+      targetPath ? path,
+      expect ? "success", control ? null, controlTargetPath ? null,
       check ? "", mutate ? null, checkDeployer ? null, mutateDeployer ? null,
     }: let
-      command = sources: let
+      command = sources: targetPath: let
         args = {
           source = krops.evalSource [ sources ];
-          inherit prune target;
+          inherit backup prune;
+          target = target // { path = targetPath; };
           force = true;
         };
       in
         if deploy == null then populate args
         else writeDeploy "deploy" (args // { useNixOutputMonitor = false; } // deploy);
-      evaluates = sources:
-        (builtins.tryEval (builtins.seq (toString (command sources)) true)).success;
+      evaluates = sources: targetPath:
+        (builtins.tryEval
+          (builtins.seq (toString (command sources targetPath)) true)).success;
       script = text: if text == null then null else prelude + vars + text;
     in
       if expect == "eval-error" then
-        if control == null then
+        if control == null && controlTargetPath == null then
           throw "scenario ${name}: expecting evaluation to fail needs a control"
-        else if evaluates sources then
+        else if evaluates sources targetPath then
           throw "scenario ${name}: populate evaluates, but is expected to fail"
-        else if !evaluates (if lib.isFunction control then control sources else control) then
+        else if !(
+          if controlTargetPath != null then evaluates sources controlTargetPath
+          else evaluates
+            (if lib.isFunction control then control sources else control)
+            targetPath
+        ) then
           throw "scenario ${name}: the control doesn't evaluate either"
         else
           null
       else {
-        populate = toString (command sources);
+        populate = toString (command sources targetPath);
         expect = if expect == "success" then null else expect.fail;
-        check = script check;
+        # No phase gets around checking the canaries.
+        check = script (check + "\ncanary_check\n");
         mutate = script mutate;
         checkDeployer = script checkDeployer;
         mutateDeployer = script mutateDeployer;
@@ -140,6 +152,10 @@ let
     '' + prepare;
     prepareDeployer =
       if prepareDeployer == null then null else prelude + vars + prepareDeployer;
+    # For all machines: before the scenario, and after it for the ones its
+    # checks don't run on.
+    canarySetup = prelude + "canary_setup\n";
+    canaryCheck = prelude + "canary_check\n";
     phases = lib.filter (x: x != null) (map phase phases);
   };
 
@@ -1254,5 +1270,327 @@ assert !(krops.isLocalTarget (targets.remote "/"));
       };
     })
   ) targetKinds;
+
+
+  # Populate replaces and removes things in the target directory.  These
+  # scenarios check that it doesn't anywhere else: names and paths that lead
+  # out of the target directory don't evaluate, and symlinks in it get
+  # replaced or refused instead of followed.  The canaries, which every phase
+  # of every scenario checks, tell if something outside changed; these
+  # scenarios point links at them.
+  safety = concatMap (targetKind: let
+    s = name: args: scenario ({
+      name = "${name}-${targetKind}";
+      inherit targetKind;
+    } // args);
+    copying = targetKind != "sudo";
+    fetchOnTarget = !copying;
+    outside = "/var/krops-outside";
+    hello = [ "/fixtures/patches/hello.patch" ];
+    # Sources that use every kind of state populate keeps: x a copy with
+    # patches, y garbage collector roots and, where the flake gets uploaded,
+    # an upload, and z a generated flake.
+    stateful = alt // {
+      x.flake-input = {
+        url = "/fixtures/top"; name = "dep"; inherit fetchOnTarget;
+        patches = hello;
+        inputs.inner.follows = "alt";
+      };
+      y.flake = { url = "/fixtures/top"; inherit fetchOnTarget; };
+      z.file = {
+        path = "/fixtures/filesrc";
+        rewriteLock = false;
+        inputs.dep.follows = "alt";
+      };
+    };
+    # A source deployed where a symlink to something outside is.  The link
+    # gets replaced, never followed.
+    link = type: { sources, to, check }: s "link-${type}" {
+      isolate = true;
+      prepare = ''
+        mkdir -p "$T"
+        ln -s ${outside}/${to} "$T"/x
+      '';
+      phases = twice {
+        inherit sources;
+        check = ''
+          case $(readlink "$T"/x || :) in
+            ${outside}/*) fail "x still links outside" ;;
+          esac
+        '' + check;
+      };
+    };
+    # Something of populate's state replaced by a symlink to outside between
+    # two deploys.  The second one refuses to use it.
+    state = name: {
+      entry, backup ? false,
+      message ? "/${entry} is a symlink, but populate needs a directory of its own there",
+    }: s "state-${name}" {
+      isolate = true;
+      phases = [
+        {
+          sources = stateful;
+          inherit backup;
+          mutate = ''
+            rm -fR "$T"/${entry}
+            mkdir -p "$(dirname "$T"/${entry})"
+            ln -s ${outside}/dir "$T"/${entry}
+          '';
+        }
+        {
+          sources = stateful;
+          inherit backup;
+          expect.fail = message;
+        }
+      ];
+    };
+  in lib.flatten [
+    (link "file" {
+      sources.x.file = "/fixtures/alt";
+      to = "dir";
+      check = ''
+        test -e "$T"/x/flake.nix || fail "flake.nix missing"
+      '';
+    })
+    # The link points at a Git work tree, which resetting and cleaning would
+    # change.
+    (link "git" {
+      sources.x.git = { url = gitUrl; ref = gitHead; };
+      to = "repo";
+      check = ''
+        expect_eq HEAD "$(git -C "$T"/x rev-parse HEAD)" ${gitHead}
+      '';
+    })
+    (link "pass" {
+      sources.x.pass = { dir = "/fixtures/pass"; name = "x"; };
+      to = "dir";
+      check = ''
+        expect_eq a "$(cat "$T"/x/a)" secret-a
+      '';
+    })
+    (link "passage" {
+      sources.x.passage = {
+        dir = "/fixtures/passage/store/x";
+        identities_file = "/fixtures/passage/identities";
+      };
+      to = "dir";
+      check = ''
+        expect_eq a "$(cat "$T"/x/a)" secret-a
+      '';
+    })
+    (link "pipe" {
+      sources.x.pipe = "/fixtures/pipe";
+      to = "file";
+      check = ''
+        expect_eq x "$(cat "$T"/x)" piped
+      '';
+    })
+    (link "derivation" {
+      sources.x.derivation = ''
+        derivation {
+          name = "krops-test";
+          system = builtins.currentSystem;
+          builder = "/bin/sh";
+          args = [ "-c" "echo built > $out" ];
+        }
+      '';
+      to = "file";
+      check = ''
+        expect_eq x "$(cat "$T"/x)" built
+      '';
+    })
+    (link "symlink" {
+      sources = alt // { x.symlink = "alt"; };
+      to = "dir";
+      check = ''
+        expect_eq link "$(readlink "$T"/x)" alt
+      '';
+    })
+    (link "flake" {
+      sources.x.flake = { url = "/fixtures/top"; inherit fetchOnTarget; };
+      to = "dir";
+      check = checkFlake { attr = "msg"; expected = "top:dep+inner,sub"; };
+    })
+    (link "flake-materialized" {
+      sources.x.flake = {
+        url = "/fixtures/top"; inherit fetchOnTarget;
+        materialize = true;
+      };
+      to = "dir";
+      check = checkFlake {
+        attr = "msg"; expected = "top:dep+inner,sub"; materialized = true;
+      };
+    })
+    (link "flake-input-patched" {
+      sources.x.flake-input = {
+        url = "/fixtures/top"; name = "dep"; inherit fetchOnTarget;
+        patches = hello;
+      };
+      to = "dir";
+      check = checkFlake { attr = "greeting"; expected = "hello+inner"; };
+    })
+    # Symlinks to outside in what a source replaces: rsync and Git remove
+    # them, and so does replacing a directory by a link.
+    (s "inner-links" (let
+      prepare = ''
+        for name in a b c; do
+          mkdir -p "$T"/$name
+          ln -s ${outside}/dir "$T"/$name/keep
+          ln -s ${outside}/dir "$T"/$name/stale
+          ln -s ${outside}/repo/.git "$T"/$name/.git
+        done
+        # A work tree whose repository is elsewhere.
+        mkdir -p "$T"/d
+        echo "gitdir: ${outside}/repo/.git" > "$T"/d/.git
+      '';
+    in {
+      isolate = true;
+      inherit prepare;
+      phases = twice {
+        sources = {
+          a.file = "/fixtures/filesrc";
+          b.git = { url = gitUrl; ref = gitHead; };
+          c.flake = { url = "/fixtures/top"; inherit fetchOnTarget; };
+          d.git = { url = gitUrl; ref = gitHead; };
+        };
+        check = ''
+          expect_eq keep "$(cat "$T"/a/keep)" keep
+          test ! -L "$T"/a/stale || fail "a/stale remains"
+          expect_eq HEAD "$(git -C "$T"/b rev-parse HEAD)" ${gitHead}
+          test ! -L "$T"/b/.git || fail "b/.git remains a link"
+          test ! -L "$T"/b/stale || fail "b/stale remains"
+          expect_eq HEAD "$(git -C "$T"/d rev-parse HEAD)" ${gitHead}
+          test -d "$T"/d/.git || fail "d/.git isn't a directory"
+          expect_eq "store directory" "$(dirname "$(readlink "$T"/c)")" /nix/store
+        '';
+      };
+    }))
+    (state "sentinel" {
+      entry = ".populate";
+      message = "error: sentinel file is a symlink";
+    })
+    (state "backup" { entry = ".populate/backup"; backup = true; })
+    (map
+      (entry: state (lib.replaceStrings ["/"] ["-"] entry) {
+        entry = ".populate/${entry}";
+      })
+      [
+        "derived" "flake-inputs" "flake-uploads" "flakes" "patches"
+        "derived/x" "patches/x" "flake-inputs/y" "flake-uploads/y" "flakes/z"
+      ])
+    # Symlinks to outside among what populate removes: leftovers of
+    # interrupted runs, state of sources that are gone, and, when pruning,
+    # entries of the target directory.  They get removed as links.
+    (s "leftovers" {
+      isolate = true;
+      prepare = ''
+        mkdir -p "$T"
+        ln -s ${outside}/dir "$T"/other
+        ln -s ${outside}/repo "$T"/repo
+      '';
+      phases = [
+        {
+          sources = stateful;
+          mutate = ''
+            ln -s ${outside}/dir "$T"/.populate/derived/x/work
+            ln -s ${outside}/dir "$T"/.populate/derived/gone
+            ln -s ${outside}/dir "$T"/.populate/flakes/gone
+            ln -s ${outside}/dir "$T"/.populate/patches/gone
+            ln -s ${outside}/dir "$T"/.populate/flake-inputs/gone
+            mkdir -p "$T"/.populate/flake-uploads
+            ln -s ${outside}/dir "$T"/.populate/flake-uploads/gone
+          '';
+        }
+        {
+          sources = stateful;
+          check = ''
+            for name in derived/x/work derived/gone flakes/gone patches/gone; do
+              test ! -L "$T"/.populate/$name || fail "$name remains"
+            done
+            for name in other repo .populate/flake-inputs/gone .populate/flake-uploads/gone; do
+              test -L "$T"/$name || fail "$name removed without pruning"
+            done
+          '';
+        }
+        {
+          sources = stateful;
+          prune = true;
+          check = ''
+            for name in other repo .populate/flake-inputs/gone .populate/flake-uploads; do
+              test ! -L "$T"/$name && test ! -e "$T"/$name || fail "$name not pruned"
+            done
+          '';
+        }
+      ];
+    })
+    # The target directory itself may be a symlink: what it points to is the
+    # target directory then.
+    (s "linked-target" {
+      isolate = true;
+      prepare = ''
+        rm -fR "$T"-real
+        mkdir "$T"-real
+        ln -s "$(basename "$T")"-real "$T"
+      '';
+      phases = twice {
+        sources = stateful;
+        check = ''
+          test -L "$T" || fail "the target directory isn't a link anymore"
+          test -e "$T"-real/alt/flake.nix || fail "alt missing"
+          gc
+          expect_eq greeting "$(nix_eval "$(readlink -f "$T"/x)"#greeting)" hello+alt
+          expect_eq msg "$(nix_eval "$(readlink -f "$T"/y)"#msg)" top:dep+inner,sub
+          expect_eq msg "$(nix_eval_online "path:$(readlink -f "$T"/.populate/flakes/z)#msg")" top:alt,sub
+        '';
+      };
+    })
+    (lib.optionals (targetKind == "local") [
+      # Rewriting a lock file changes no other hard link to it.  The lock
+      # file is like the source's, with its modification time, so rsync
+      # leaves the link in place.  (The source is on the deploying machine,
+      # so this only runs there.)
+      (s "lock-hard-link" {
+        prepare = ''
+          mkdir -p "$T"
+          cp -a /fixtures/filesrc "$T"/x
+          cp -p "$T"/x/flake.lock "$T".lock
+          ln -f "$T".lock "$T"/x/flake.lock
+        '';
+        phases = twice {
+          sources = alt // {
+            x.file = { path = "/fixtures/filesrc"; inputs.dep.follows = "alt"; };
+          };
+          check = ''
+            cmp -s "$T".lock /fixtures/filesrc/flake.lock ||
+              fail "the other hard link changed"
+            expect_eq msg "$(nix_eval_online "$T"/x#msg)" top:alt,sub
+          '';
+        };
+      })
+      # Names that lead out of the target directory, to the directory itself,
+      # or to populate's state.
+      (s "names" {
+        phases = map
+          (name: {
+            sources.${name}.file = "/fixtures/alt";
+            expect = "eval-error";
+            control = { ok.file = "/fixtures/alt"; };
+          })
+          [ "" "." ".." ".populate" "a/b" "../x" "/etc" "a\nb" ];
+      })
+      # Target paths that aren't absolute, that are the root directory, or
+      # that resolve to another directory than they name.
+      (s "paths" {
+        phases = map
+          (targetPath: {
+            sources = alt;
+            inherit targetPath;
+            expect = "eval-error";
+            controlTargetPath = "/var/krops/paths-local";
+          })
+          [ "" "/" "//" "/." "relative" "/var/krops/.." "/var/krops/../.." "/var/krops/a\nb" ];
+      })
+    ])
+  ]) targetKinds;
 
 }
