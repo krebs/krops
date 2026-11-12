@@ -114,7 +114,8 @@ will be obtained by ssh from its configuration files.
 If the `target` attribute is an attribute set, then it can specify the
 attributes `extraOptions`, `host`, `path`, `port`, `sudo`, and `user`.
 The `extraOptions` is a list of strings that get passed to ssh as additional
-arguments.  The `sudo` attribute is a boolean and if set to true, then it's
+arguments, one argument per string, so an option and its value are separate
+strings, e.g. `[ "-i" "/path/to/key" ]`.  The `sudo` attribute is a boolean and if set to true, then it's
 possible to to deploy to targets that disallow sshing in as root, but allow
 (preferably passwordless) sudo.
 Example:
