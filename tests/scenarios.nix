@@ -26,6 +26,8 @@
   # HEAD of /fixtures/gitsrc, and its parent.
   gitHead,
   gitFirst,
+  # Version of rsync on the deploying machine.
+  rsyncVersion,
 }:
 
 let
@@ -269,7 +271,37 @@ assert !(krops.isLocalTarget (targets.remote "/"));
         targetKind = "local";
         phases = [ (builtins.head args.phases) ];
       }))
-    ];
+    ]
+    # A source whose .rsync-filter rsync 3.5.0 and later can't read, because
+    # it's reached through a symlink that neither root nor the user deploying
+    # owns.  (Running as root, the scenarios can't use the other common
+    # cause, a directory on the way that the user may enter but not read.)
+    ++ concatMap (targetKind: map (insecureLinks: let
+      affected = lib.versionAtLeast rsyncVersion "3.5.0";
+      excluded = !affected || insecureLinks == true;
+    in scenario {
+      name = "file-${targetKind}-insecureLinks" +
+        (if insecureLinks == null then "Null" else if insecureLinks then "True" else "False");
+      inherit targetKind;
+      prepare = ''
+        mkdir -p "$T"/x
+        echo old > "$T"/x/garbage
+      '';
+      phases = twice ({
+        sources.x.file = { path = "/fixtures/filtered-link"; inherit insecureLinks; };
+      } // (if affected && insecureLinks == null then {
+        expect.fail = "can't read /fixtures/filtered-link/.rsync-filter, so it would sync /fixtures/filtered-link/ without it.";
+      } else {
+        check = ''
+          expect_eq keep "$(cat "$T"/x/keep)" keep
+          ${if excluded then ''
+            test ! -e "$T"/x/garbage || fail "garbage not excluded"
+          '' else ''
+            expect_eq garbage "$(cat "$T"/x/garbage)" garbage
+          ''}
+        '';
+      }));
+    }) [ null true false ]) targetKinds;
 
   flake = matrix "flake" {
     kind = [ "git" "path" "subdir" "remote" ];

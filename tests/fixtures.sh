@@ -258,6 +258,16 @@ cat > /fixtures/alt2/flake.nix <<'NIX'
 { outputs = _: { greeting = "alt2"; who = "alt2"; }; }
 NIX
 
+# filtered, filtered-link: a directory with an .rsync-filter, and a symlink to
+# it that neither root nor the user deploying owns, through which rsync 3.5.0
+# and later can't read that file.
+mkdir /fixtures/filtered
+printf -- '- /garbage\n' > /fixtures/filtered/.rsync-filter
+echo keep > /fixtures/filtered/keep
+echo garbage > /fixtures/filtered/garbage
+ln -s filtered /fixtures/filtered-link
+chown -h nobody /fixtures/filtered-link
+
 # noflake: a directory without flake.nix.
 mkdir /fixtures/noflake
 echo noflake > /fixtures/noflake/README

@@ -21,6 +21,7 @@ let
     remoteHost = "target";
     agePath = "${pkgs.age}/bin/age";
     inherit gitHead gitFirst;
+    rsyncVersion = pkgs.rsync.version;
   };
   flakeJq = import ../pkgs/populate/flake-jq.nix;
 in

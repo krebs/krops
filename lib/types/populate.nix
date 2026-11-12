@@ -166,6 +166,10 @@
           default = true;
           type = lib.types.bool;
         };
+        insecureLinks = lib.mkOption {
+          default = null;
+          type = lib.types.nullOr lib.types.bool;
+        };
       };
     };
     flake = lib.types.submodule {

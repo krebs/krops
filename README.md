@@ -332,6 +332,17 @@ Supported attributes:
   if they exist on the target. This is passed to the `--delete-excluded` option
   of rsync. Defaults to `true`.
 
+* `insecureLinks` (optional) -
+  what to do if rsync can't read `.rsync-filter` files in `path`.  rsync 3.5.0
+  and later open them more strictly than the files they transfer, and ignore
+  the ones they can't open, e.g. because a directory on the way may be
+  entered but not read, like a home directory with mode 711, or because a
+  symlink on the way belongs to neither root nor the user deploying.  By
+  default, with `null`, populating fails with an error naming the file.  With
+  `true`, rsync reads such files anyway (`--insecure-links`); with `false`,
+  rsync syncs without them.  Both print a warning.  Older versions of rsync
+  aren't affected.
+
 * `inputs` (optional) -
   inputs of the flake in this source to draw from other sources, see
   [Flake inputs from sources](#flake-inputs-from-sources).

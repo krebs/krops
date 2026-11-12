@@ -753,6 +753,7 @@ let
     if test -d "$source_path"; then
       source_path=$source_path/
     fi
+    ${insecureLinks config.insecureLinks}
     # Each item gets logged with what changed about it, and its size, as
     # transferred and in total.
     ${rsync}/bin/rsync \
@@ -765,6 +766,7 @@ let
           (filter: /* sh */ "--${filter.type} ${quote filter.pattern}")
           config.filters} \
         -e ${quote (ssh' target)} \
+        $insecure_links \
         --itemize-changes \
         --out-format=${quote "%i %n%L %'''b/%'''l"} \
         --info=backup,del,copy,misc,mount,name,nonreg,remove,skip,symsafe \
@@ -787,7 +789,60 @@ let
     exclude = [];
     filters = [];
     deleteExcluded = true;
+    insecureLinks = null;
   };
+
+  # rsync 3.5.0 and later open .rsync-filter files with a stricter walk than
+  # the files they transfer, and treat the ones that walk can't open as
+  # missing, without saying so.  It fails, e.g., for a directory on the way
+  # that the user may enter but not read, like a home directory with mode
+  # 711, or a symlink that neither root nor the user owns.  So rsync, when
+  # asked, tells which .rsync-filter files in the source in $source_path it
+  # reads.  If it reports existing ones as missing, setting fails with an
+  # error if it's null, syncs without them if it's false, and makes rsync
+  # open them like the files it transfers with --insecure-links if it's true,
+  # both with a warning.  Sets insecure_links to rsync's extra argument.
+  insecureLinks = setting: /* sh */ ''
+    insecure_links=
+    rsync_version=$(${rsync}/bin/rsync --version | ${coreutils}/bin/head -n 1)
+    rsync_version=$(set -- $rsync_version; echo "$3")
+    if test "$(printf '%s\n' 3.5.0 "$rsync_version" | ${coreutils}/bin/sort -V |
+               ${coreutils}/bin/head -n 1)" = 3.5.0 &&
+        test -n "$(${findutils}/bin/find "$source_path" -name .rsync-filter -print -quit)"
+    then
+      # The first existing .rsync-filter file rsync reports as missing.
+      ignored=$(
+        ${rsync}/bin/rsync --dry-run --debug=FILTER2 -F -rlptD \
+            "$source_path" "$TMPDIR"/rsync-filter-check 2>&1 |
+        while read -r line; do
+          case $line in
+            "[sender] parse_filter_file("*") [not found]")
+              file=''${line#*parse_filter_file(}
+              file=''${file%,*,*}
+              if test -e "$file"; then
+                printf '%s\n' "$file"
+                break
+              fi
+              ;;
+          esac
+        done
+      )
+      if test -n "$ignored"; then
+        ${if setting == null then /* sh */ ''
+          >&2 printf 'error: rsync %s can'"'"'t read %s, so it would sync %s without it.  This happens, e.g., if a directory on the way isn'"'"'t readable, or if a symlink on the way belongs to neither root nor the user running rsync.  Set the source'"'"'s insecureLinks to true to make rsync read it anyway, or to false to sync without it.\n' \
+              "$rsync_version" "$ignored" "$source_path"
+          exit 1
+        '' else if setting then /* sh */ ''
+          >&2 printf 'warning: rsync %s can'"'"'t read %s; it reads it with --insecure-links anyway, because insecureLinks is true.\n' \
+              "$rsync_version" "$ignored"
+          insecure_links=--insecure-links
+        '' else /* sh */ ''
+          >&2 printf 'warning: rsync %s can'"'"'t read %s, so it syncs %s without it, because insecureLinks is false.\n' \
+              "$rsync_version" "$ignored" "$source_path"
+        ''}
+      fi
+    fi
+  '';
 
   runShell = target: command:
     if isLocalTarget target
