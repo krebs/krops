@@ -125,6 +125,10 @@
         path = lib.mkOption {
           type = lib.types.absolute-pathname;
         };
+        rewriteLock = lib.mkOption {
+          default = true;
+          type = lib.types.bool;
+        };
         useChecksum = lib.mkOption {
           default = false;
           type = lib.types.bool;
@@ -185,6 +189,19 @@
           default = {};
           type = flake-inputs;
         };
+        materialize = lib.mkOption {
+          default = false;
+          type = lib.types.bool;
+        };
+        patches = lib.mkOption {
+          apply = map toString;
+          default = [];
+          type = lib.types.listOf lib.types.path;
+        };
+        rewriteLock = lib.mkOption {
+          default = true;
+          type = lib.types.bool;
+        };
       };
     };
     flake-input = lib.types.submodule {
@@ -199,6 +216,19 @@
         inputs = lib.mkOption {
           default = {};
           type = flake-inputs;
+        };
+        materialize = lib.mkOption {
+          default = false;
+          type = lib.types.bool;
+        };
+        patches = lib.mkOption {
+          apply = map toString;
+          default = [];
+          type = lib.types.listOf lib.types.path;
+        };
+        rewriteLock = lib.mkOption {
+          default = true;
+          type = lib.types.bool;
         };
         name = lib.mkOption {
           type = lib.types.str;
@@ -223,6 +253,10 @@
         };
         ref = lib.mkOption {
           type = lib.types.str; # TODO lib.types.git.ref
+        };
+        rewriteLock = lib.mkOption {
+          default = true;
+          type = lib.types.bool;
         };
         url = lib.mkOption {
           type = lib.types.str; # TODO lib.types.git.url

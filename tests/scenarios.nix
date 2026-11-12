@@ -64,6 +64,21 @@ let
 
   alt = { alt.file = "/fixtures/alt"; };
 
+  # How a source draws inputs from other sources: not at all, by rewriting
+  # the lock file of its flake, or by a generated flake.
+  inputModes = [ "none" "rewrite" "generated" ];
+
+  # The options of a source drawing inputs in mode.
+  drawInputs = mode: inputs: optionalAttrs (mode != "none") ({
+    inherit inputs;
+  } // optionalAttrs (mode == "generated") {
+    rewriteLock = false;
+  });
+
+  # The flake of source x that has its inputs drawn in mode.
+  flakeOf = mode:
+    if mode == "generated" then ''"$T"/.populate/flakes/x'' else ''"$T"/x'';
+
   # Builds a scenario from a name, a target kind, and phases with sources.
   # Isolated scenarios start with no target directories and a collected store
   # on both machines, so no other scenario's store paths or roots stand in for
@@ -150,16 +165,22 @@ let
       targetKinds;
 
   # Checks that the source at $T/x is a link to a store path, or to the
-  # subdirectory sub therein, and evaluates the attribute attr of the flake
-  # there, through the link, or of its generated flake, after collecting
-  # garbage.
-  checkFlake = { attr, expected, subdir ? false, generated ? false }: ''
+  # subdirectory sub therein, or a writable directory if materialized, and
+  # evaluates the attribute attr of the flake there, or of its generated
+  # flake, after collecting garbage.
+  checkFlake = {
+    attr, expected, subdir ? false, generated ? false, materialized ? false,
+  }: (if materialized then ''
+    test -d "$T"/x && ! test -L "$T"/x || fail "x isn't a directory"
+    test -w "$T"/x/flake.nix || fail "flake.nix isn't writable"
+  '' else ''
     link=$(readlink "$T"/x)
     ${if subdir then ''
       expect_eq subdirectory "$(basename "$link")" sub
       link=$(dirname "$link")
     '' else ""}
     expect_eq "store directory" "$(dirname "$link")" /nix/store
+  '') + ''
     test ! -e "$T"/.populate/flake-uploads || fail "upload directory remains"
     gc
     expect_eq ${attr} "$(nix_eval ${
@@ -219,9 +240,8 @@ assert !(krops.isLocalTarget (targets.remote "/"));
             inherit (flags) deleteExcluded;
             exclude = optional (flags.exclude or false) "skip-ex";
             filters = optional flags.filters { type = "exclude"; pattern = "skip-f"; };
-            inputs = optionalAttrs flags.inputs { dep.follows = "alt"; };
-          };
-        } // optionalAttrs flags.inputs alt;
+          } // drawInputs flags.inputs { dep.follows = "alt"; };
+        } // optionalAttrs (flags.inputs != "none") alt;
         check = let
           excluded = file: set: ''
             ${if !set then ''
@@ -242,10 +262,10 @@ assert !(krops.isLocalTarget (targets.remote "/"));
             expect_eq stale "$(cat "$T"/x/stale)" stale
           ''}
           expect_eq same "$(cat "$T"/x/same)" ${if flags.checksum then "AAAA" else "BBBB"}
-        '' + optionalString flags.inputs ''
+        '' + optionalString (flags.inputs != "none") ''
           # Inputs not drawn from sources aren't delivered, so this needs the
           # network and can't collect garbage before.
-          expect_eq msg "$(nix_eval_online "$T"/.populate/flakes/x#msg)" top:alt,sub
+          expect_eq msg "$(nix_eval_online ${flakeOf flags.inputs}#msg)" top:alt,sub
         '';
       };
     };
@@ -254,7 +274,7 @@ assert !(krops.isLocalTarget (targets.remote "/"));
       checksum = [ false true ];
       deleteExcluded = [ false true ];
       filters = [ false true ];
-      inputs = [ false true ];
+      inputs = inputModes;
     } f
     ++ [
       # The deprecated exclude option, once, because it warns.
@@ -264,7 +284,7 @@ assert !(krops.isLocalTarget (targets.remote "/"));
           deleteExcluded = true;
           exclude = true;
           filters = false;
-          inputs = false;
+          inputs = "none";
         } null;
       in args // {
         name = "file-local-exclude";
@@ -306,7 +326,8 @@ assert !(krops.isLocalTarget (targets.remote "/"));
   flake = matrix "flake" {
     kind = [ "git" "path" "subdir" "remote" ];
     fetchOnTarget = [ false true ];
-    inputs = [ false true ];
+    inputs = inputModes;
+    materialize = [ false true ];
   } (flags: ctx: let
     flake = {
       git = "/fixtures/top";
@@ -315,30 +336,32 @@ assert !(krops.isLocalTarget (targets.remote "/"));
       remote = "${url}/remote.tar.gz";
     }.${flags.kind};
     msg = {
-      git = "top:${if flags.inputs then "alt" else "dep+inner"},sub";
+      git = "top:${if flags.inputs != "none" then "alt" else "dep+inner"},sub";
       path = msg.git;
-      remote = "remote:${if flags.inputs then "alt" else "dep+inner"}";
+      remote = "remote:${if flags.inputs != "none" then "alt" else "dep+inner"}";
     };
   in
     # The flake in a subdirectory has no inputs to draw from sources.
-    if flags.kind == "subdir" && flags.inputs then null else {
+    if flags.kind == "subdir" && flags.inputs != "none" then null else {
     isolate = true;
     phases = twice ({
       sources = {
         x.flake = {
           url = flake;
-          inherit (flags) fetchOnTarget;
-          inputs = optionalAttrs flags.inputs { dep.follows = "alt"; };
-        };
-      } // optionalAttrs flags.inputs alt;
+          inherit (flags) fetchOnTarget materialize;
+        } // drawInputs flags.inputs { dep.follows = "alt"; };
+      } // optionalAttrs (flags.inputs != "none") alt;
     } // (if copyingWithSudo flags ctx then {
       expect = "eval-error";
       control = withFetchOnTarget;
     } else {
       check = if flags.kind == "subdir" then checkFlake {
         attr = "who"; expected = "sub"; subdir = true;
+        materialized = flags.materialize;
       } else checkFlake {
-        attr = "msg"; expected = msg.${flags.kind}; generated = flags.inputs;
+        attr = "msg"; expected = msg.${flags.kind};
+        generated = flags.inputs == "generated";
+        materialized = flags.materialize;
       };
     }));
   });
@@ -346,10 +369,11 @@ assert !(krops.isLocalTarget (targets.remote "/"));
   flake-input = concatMap
     (name: matrix "flake-input-${lib.replaceStrings ["/"] ["."] name}" ({
       fetchOnTarget = [ false true ];
+      materialize = [ false true ];
     } // optionalAttrs (name == "dep") {
-      inputs = [ false true ];
+      inputs = inputModes;
     }) (flags: ctx: let
-      inputs = flags.inputs or false;
+      inputs = flags.inputs or "none";
     in {
       isolate = true;
       phases = twice ({
@@ -357,10 +381,9 @@ assert !(krops.isLocalTarget (targets.remote "/"));
           x.flake-input = {
             url = "/fixtures/top";
             inherit name;
-            inherit (flags) fetchOnTarget;
-            inputs = optionalAttrs inputs { inner.follows = "alt"; };
-          };
-        } // optionalAttrs inputs alt;
+            inherit (flags) fetchOnTarget materialize;
+          } // drawInputs inputs { inner.follows = "alt"; };
+        } // optionalAttrs (inputs != "none") alt;
       } // (if copyingWithSudo flags ctx then {
         expect = "eval-error";
         control = withFetchOnTarget;
@@ -368,11 +391,17 @@ assert !(krops.isLocalTarget (targets.remote "/"));
         check = {
           dep = checkFlake {
             attr = "greeting";
-            expected = if inputs then "dep+alt" else "dep+inner";
-            generated = inputs;
+            expected = if inputs != "none" then "dep+alt" else "dep+inner";
+            generated = inputs == "generated";
+            materialized = flags.materialize;
           };
-          "dep/inner" = checkFlake { attr = "who"; expected = "inner"; };
-          sub = checkFlake { attr = "who"; expected = "sub"; subdir = true; };
+          "dep/inner" = checkFlake {
+            attr = "who"; expected = "inner"; materialized = flags.materialize;
+          };
+          sub = checkFlake {
+            attr = "who"; expected = "sub"; subdir = true;
+            materialized = flags.materialize;
+          };
         }.${name};
       }));
     }))
@@ -382,7 +411,7 @@ assert !(krops.isLocalTarget (targets.remote "/"));
     shallow = [ false true ];
     fetchAlways = [ false true ];
     cleanExclude = [ false true ];
-    inputs = [ false true ];
+    inputs = inputModes;
   } (flags: _: let
     check = ''
       expect_eq HEAD "$(git -C "$T"/x rev-parse HEAD)" ${gitHead}
@@ -390,11 +419,12 @@ assert !(krops.isLocalTarget (targets.remote "/"));
         if flags.shallow then "1" else "2"
       }
       test -e "$T"/x/two || fail "two missing"
-    '' + optionalString flags.inputs ''
+    '' + optionalString (flags.inputs == "generated") ''
       grep -q '"git+file:' "$T"/.populate/flakes/x/flake.nix ||
         fail "the Git work tree isn't referred to as git+file:"
+    '' + optionalString (flags.inputs != "none") ''
       gc
-      expect_eq msg "$(nix_eval "$T"/.populate/flakes/x#msg)" git:alt
+      expect_eq msg "$(nix_eval ${flakeOf flags.inputs}#msg)" git:alt
     '';
     sources = ref: {
       x.git = {
@@ -402,9 +432,8 @@ assert !(krops.isLocalTarget (targets.remote "/"));
         inherit ref;
         inherit (flags) shallow fetchAlways;
         clean.exclude = optional flags.cleanExclude "keepme";
-        inputs = optionalAttrs flags.inputs { dep.follows = "alt"; };
-      };
-    } // optionalAttrs flags.inputs alt;
+      } // drawInputs flags.inputs { dep.follows = "alt"; };
+    } // optionalAttrs (flags.inputs != "none") alt;
   in {
     phases = [
       # The older commit first, so deploying HEAD changes the work tree, and
@@ -501,7 +530,7 @@ assert !(krops.isLocalTarget (targets.remote "/"));
 
   # writeDeploy's arguments to nixos-rebuild, which a stand-in records.
   deploy = matrix "deploy" {
-    flake = [ "none" "source" "generated" ];
+    flake = [ "none" "source" "rewrite" "generated" ];
     etcFlake = [ false true ];
     buildTarget = [ false true ];
   } (flags: ctx: let
@@ -517,6 +546,7 @@ assert !(krops.isLocalTarget (targets.remote "/"));
       ++ {
         none = [];
         source = [ "--flake" "${build.path}/x" ];
+        rewrite = [ "--flake" "${build.path}/x" ];
         # Generated flakes as path:, which an enclosing Git work tree doesn't
         # capture.
         generated = [ "--flake" "path:${build.path}/.populate/flakes/x" ];
@@ -544,9 +574,8 @@ assert !(krops.isLocalTarget (targets.remote "/"));
             x.flake = {
               url = "/fixtures/top";
               fetchOnTarget = ctx.targetKind == "sudo";
-              inputs = optionalAttrs (flags.flake == "generated") {
-                dep.follows = "alt";
-              };
+            } // drawInputs (if flags.flake == "source" then "none" else flags.flake) {
+              dep.follows = "alt";
             };
           };
         deploy = {
@@ -572,68 +601,84 @@ assert !(krops.isLocalTarget (targets.remote "/"));
     } // args);
     copying = targetKind != "sudo";
     fetchOnTarget = !copying;
-  in [
-    # A generated flake draws an input from a source with a generated flake.
-    (s "chain" {
+    # A scenario for each way of drawing inputs, which f gets as mode, along
+    # with draw, which adds inputs drawn that way to a source's options, and
+    # flake, which gives the flake to evaluate for a source.
+    modes = name: f: map
+      (mode: s "${name}-${mode}" (f {
+        draw = drawInputs mode;
+        flake = n:
+          if mode == "generated" then ''"$T"/.populate/flakes/${n}'' else ''"$T"/${n}'';
+        inherit mode;
+      }))
+      [ "rewrite" "generated" ];
+  in lib.flatten [
+    # A source draws an input from a source that draws inputs itself.
+    (modes "chain" ({ draw, flake, ... }: {
       phases = twice {
         sources = alt // {
-          a.flake = { url = "/fixtures/top"; inherit fetchOnTarget; inputs.dep.follows = "b"; };
+          a.flake = { url = "/fixtures/top"; inherit fetchOnTarget; } // draw { dep.follows = "b"; };
           b.flake-input = {
             url = "/fixtures/top"; name = "dep"; inherit fetchOnTarget;
-            inputs.inner.follows = "alt";
-          };
+          } // draw { inner.follows = "alt"; };
         };
         check = ''
           gc
-          expect_eq msg "$(nix_eval "$T"/.populate/flakes/a#msg)" top:dep+alt,sub
+          expect_eq msg "$(nix_eval ${flake "a"}#msg)" top:dep+alt,sub
         '';
       };
-    })
-    # An input of an input drawn from a source gets overridden at that source.
-    (s "nested" {
+    }))
+    # An input of an input drawn from a source gets drawn from another
+    # source.
+    (modes "nested" ({ draw, flake, ... }: {
       phases = twice {
         sources = alt // {
           x.flake = {
             url = "/fixtures/top"; inherit fetchOnTarget;
-            inputs.dep = { follows = "b"; inputs.inner.follows = "alt"; };
-          };
+          } // draw { dep = { follows = "b"; inputs.inner.follows = "alt"; }; };
           b.flake-input = { url = "/fixtures/top"; name = "dep"; inherit fetchOnTarget; };
         };
         check = ''
           gc
-          expect_eq msg "$(nix_eval "$T"/.populate/flakes/x#msg)" top:dep+alt,sub
+          expect_eq msg "$(nix_eval ${flake "x"}#msg)" top:dep+alt,sub
         '';
       };
-    })
-    # A generated flake gets locked again when a source it draws from
-    # changes.
-    (s "relock" (let
-      x.file = { path = "/fixtures/filesrc"; inputs.dep.follows = "a"; };
+    }))
+    # The lock file gets rewritten or generated again when a source inputs
+    # get drawn from changes.
+    (modes "relock" ({ draw, flake, ... }: let
+      x.file = { path = "/fixtures/filesrc"; } // draw { dep.follows = "a"; };
     in {
       phases = [
         {
           sources = { inherit x; a.file = "/fixtures/alt"; };
           check = ''
-            expect_eq msg "$(nix_eval_online "$T"/.populate/flakes/x#msg)" top:alt,sub
+            expect_eq msg "$(nix_eval_online ${flake "x"}#msg)" top:alt,sub
           '';
         }
         {
           sources = { inherit x; a.file = "/fixtures/alt2"; };
           check = ''
-            expect_eq msg "$(nix_eval_online "$T"/.populate/flakes/x#msg)" top:alt2,sub
+            expect_eq msg "$(nix_eval_online ${flake "x"}#msg)" top:alt2,sub
           '';
         }
       ];
     }))
-    # A generated flake gets removed once its source draws no inputs anymore.
-    (s "removal" {
+    # What drawing inputs needs gets removed once a source draws no inputs
+    # anymore.
+    (modes "removal" ({ draw, mode, ... }: let
+      state = {
+        rewrite = "derived/x/result";
+        generated = "flakes/x/flake.lock";
+      }.${mode};
+    in {
       phases = [
         {
           sources = alt // {
-            x.flake = { url = "/fixtures/top"; inherit fetchOnTarget; inputs.dep.follows = "alt"; };
+            x.flake = { url = "/fixtures/top"; inherit fetchOnTarget; } // draw { dep.follows = "alt"; };
           };
           check = ''
-            test -e "$T"/.populate/flakes/x/flake.lock || fail "generated flake missing"
+            test -e "$T"/.populate/${state} || fail "${state} missing"
           '';
         }
         {
@@ -641,11 +686,158 @@ assert !(krops.isLocalTarget (targets.remote "/"));
             x.flake = { url = "/fixtures/top"; inherit fetchOnTarget; };
           };
           check = ''
-            test ! -e "$T"/.populate/flakes/x || fail "generated flake remains"
+            test ! -e "$T"/.populate/${dirOf state} || fail "${dirOf state} remains"
+          '' + checkFlake { attr = "msg"; expected = "top:dep+inner,sub"; };
+        }
+      ];
+    }))
+    # Patches get applied in order to a copy, which becomes a store path and
+    # gets made again only when the patches change.
+    (s "patches" (let
+      x = patches: {
+        x.flake-input = {
+          url = "/fixtures/top"; name = "dep"; inherit fetchOnTarget patches;
+        };
+      };
+      both = x [ "/fixtures/patches/hello.patch" "/fixtures/patches/hello2.patch" ];
+    in {
+      phases = [
+        {
+          sources = both;
+          check = checkFlake { attr = "greeting"; expected = "hello2+inner"; };
+          # The key changes whenever the copy gets made again, which
+          # the store path doesn't show, being the same.
+          mutate = ''
+            readlink "$T"/x > "$T".first
+            stat -c %y "$T"/.populate/derived/x/key > "$T".key
+          '';
+        }
+        {
+          sources = both;
+          check = checkFlake { attr = "greeting"; expected = "hello2+inner"; } + ''
+            expect_eq "store path" "$(readlink "$T"/x)" "$(cat "$T".first)"
+            expect_eq "copy made at" "$(stat -c %y "$T"/.populate/derived/x/key)" "$(cat "$T".key)"
+          '';
+        }
+        {
+          sources = x [ "/fixtures/patches/hello.patch" ];
+          check = checkFlake { attr = "greeting"; expected = "hello+inner"; } + ''
+            test "$(readlink "$T"/x)" != "$(cat "$T".first)" || fail "store path unchanged"
+            expect_eq patches "$(ls "$T"/.populate/patches/x)" 0001-hello.patch
+          '';
+        }
+        {
+          sources = x [];
+          check = checkFlake { attr = "greeting"; expected = "dep+inner"; } + ''
+            test ! -e "$T"/.populate/patches || fail "patches remain"
+            test ! -e "$T"/.populate/derived || fail "derived remains"
           '';
         }
       ];
+    }))
+    (s "patch-fails" {
+      phases = [{
+        sources.x.flake-input = {
+          url = "/fixtures/top"; name = "dep"; inherit fetchOnTarget;
+          patches = [ "/fixtures/patches/bad.patch" ];
+        };
+        expect.fail = "error: patch bad.patch does not apply to source x";
+      }];
     })
+    # Patches apply in the subdirectory the target path shows.
+    (s "patch-subdir" {
+      phases = twice {
+        sources.x.flake-input = {
+          url = "/fixtures/top"; name = "sub"; inherit fetchOnTarget;
+          patches = [ "/fixtures/patches/sub.patch" ];
+        };
+        check = checkFlake { attr = "who"; expected = "patched"; subdir = true; };
+      };
+    })
+    # A copy with a rewritten lock file gets made again only when a source
+    # it draws inputs from changes.
+    (s "rewrite-cache" (let
+      x.flake-input = {
+        url = "/fixtures/top"; name = "dep"; inherit fetchOnTarget;
+        inputs.inner.follows = "a";
+      };
+    in {
+      phases = [
+        {
+          sources = { inherit x; a.file = "/fixtures/alt"; };
+          check = checkFlake { attr = "greeting"; expected = "dep+alt"; };
+          # The key changes whenever the copy gets made again, which
+          # the store path doesn't show, being the same.
+          mutate = ''
+            readlink "$T"/x > "$T".first
+            stat -c %y "$T"/.populate/derived/x/key > "$T".key
+          '';
+        }
+        {
+          sources = { inherit x; a.file = "/fixtures/alt"; };
+          check = checkFlake { attr = "greeting"; expected = "dep+alt"; } + ''
+            expect_eq "store path" "$(readlink "$T"/x)" "$(cat "$T".first)"
+            expect_eq "copy made at" "$(stat -c %y "$T"/.populate/derived/x/key)" "$(cat "$T".key)"
+          '';
+        }
+        {
+          sources = { inherit x; a.file = "/fixtures/alt2"; };
+          check = checkFlake { attr = "greeting"; expected = "dep+alt2"; } + ''
+            test "$(readlink "$T"/x)" != "$(cat "$T".first)" || fail "store path unchanged"
+          '';
+        }
+      ];
+    }))
+    # A materialized input is a writable copy, patched and with a rewritten
+    # lock file, which gets made again only when what it derives from
+    # changes, and becomes a link again when not materialized anymore.
+    (s "materialize" (let
+      x = patches: alt // {
+        x.flake-input = {
+          url = "/fixtures/top"; name = "dep"; inherit fetchOnTarget patches;
+          materialize = true;
+          inputs.inner.follows = "alt";
+        };
+      };
+      hello = [ "/fixtures/patches/hello.patch" ];
+    in {
+      phases = [
+        {
+          sources = x hello;
+          check = ''
+            test ! -L "$T"/x || fail "x is a link"
+            test -w "$T"/x/flake.nix || fail "flake.nix isn't writable"
+            gc
+            expect_eq greeting "$(nix_eval "$T"/x#greeting)" hello+alt
+          '';
+          mutate = ''
+            echo local > "$T"/x/local
+          '';
+        }
+        {
+          sources = x hello;
+          check = ''
+            expect_eq local "$(cat "$T"/x/local)" local
+          '';
+        }
+        {
+          sources = x (hello ++ [ "/fixtures/patches/hello2.patch" ]);
+          check = ''
+            test ! -e "$T"/x/local || fail "local remains"
+            gc
+            expect_eq greeting "$(nix_eval "$T"/x#greeting)" hello2+alt
+          '';
+        }
+        {
+          sources = alt // {
+            x.flake-input = { url = "/fixtures/top"; name = "dep"; inherit fetchOnTarget; };
+          };
+          check = checkFlake { attr = "greeting"; expected = "dep+inner"; } + ''
+            test ! -e "$T"/.populate/derived || fail "derived remains"
+          '';
+        }
+      ];
+    }))
     # Roots follow the delivered input.
     (s "retarget" {
       phases = [
@@ -780,7 +972,18 @@ assert !(krops.isLocalTarget (targets.remote "/"));
     roots = n: ''
       expect_eq roots "$(ls "$T"/.populate/flake-inputs/x 2>/dev/null | wc -l)" ${toString n}
     '';
-  in [
+    # A scenario for each way of drawing inputs, which f gets as mode, along
+    # with draw, which adds inputs drawn that way to a source's options, and
+    # flake, which gives the flake to evaluate for a source.
+    modes = name: f: map
+      (mode: s "${name}-${mode}" (f {
+        draw = drawInputs mode;
+        flake = n:
+          if mode == "generated" then ''"$T"/.populate/flakes/${n}'' else ''"$T"/${n}'';
+        inherit mode;
+      }))
+      [ "rewrite" "generated" ];
+  in lib.flatten [
     # The registry entry kropsremote, which fixtures.sh adds on the deploying
     # machine, points at ${url}/remote.tar.gz.  The deploying machine has no
     # global registry, which it couldn't download.
@@ -796,17 +999,19 @@ assert !(krops.isLocalTarget (targets.remote "/"));
         check = checkFlake { attr = "who"; expected = "sub"; subdir = true; };
       };
     })
-    (s "subdir-inputs" {
+    (modes "subdir-inputs" ({ draw, mode, ... }: {
       phases = twice {
         sources = alt // {
           x.flake = {
             url = "git+file:/fixtures/monoin?dir=sub"; inherit fetchOnTarget;
-            inputs.dep.follows = "alt";
-          };
+          } // draw { dep.follows = "alt"; };
         };
-        check = checkFlake { attr = "msg"; expected = "monoin:alt"; subdir = true; generated = true; };
+        check = checkFlake {
+          attr = "msg"; expected = "monoin:alt"; subdir = true;
+          generated = mode == "generated";
+        };
       };
-    })
+    }))
     (s "dirty" {
       phases = twice {
         sources.x.flake = { url = "/fixtures/dirty"; inherit fetchOnTarget; };
@@ -942,49 +1147,50 @@ assert !(krops.isLocalTarget (targets.remote "/"));
         }
       ];
     }))
-    (s "override-generated" {
+    # An input of an input drawn from a source that draws inputs itself
+    # gets drawn from another source.
+    (modes "override" ({ draw, flake, ... }: {
       phases = twice {
         sources = {
           x.flake = {
             url = "/fixtures/top"; inherit fetchOnTarget;
-            inputs.dep = { follows = "b"; inputs.q.follows = "c2"; };
-          };
-          b.file = { path = "/fixtures/two"; inputs.p.follows = "c1"; };
+          } // draw { dep = { follows = "b"; inputs.q.follows = "c2"; }; };
+          b.file = { path = "/fixtures/two"; } // draw { p.follows = "c1"; };
           c1.file = "/fixtures/c1";
           c2.file = "/fixtures/c2";
         };
         check = ''
-          expect_eq msg "$(nix_eval_online "$T"/.populate/flakes/x#msg)" top:two:c1+c2,sub
+          expect_eq msg "$(nix_eval_online ${flake "x"}#msg)" top:two:c1+c2,sub
         '';
       };
-    })
-    (s "nonflake-input" {
+    }))
+    (modes "nonflake-input" ({ draw, flake, ... }: {
       phases = twice {
         sources = {
-          x.file = { path = "/fixtures/usedata"; inputs.data.follows = "data"; };
+          x.file = { path = "/fixtures/usedata"; } // draw { data.follows = "data"; };
           data.file = "/fixtures/data";
         };
         check = ''
-          expect_eq msg "$(nix_eval "$T"/.populate/flakes/x#msg)" data:hello
+          expect_eq msg "$(nix_eval ${flake "x"}#msg)" data:hello
         '';
       };
-    })
+    }))
     # The target directory in a Git work tree.
-    (s "gitdir" {
+    (modes "gitdir" ({ draw, flake, ... }: {
       prepare = ''
         mkdir -p "$T"
         git -C "$T" init -q
       '';
       phases = twice {
         sources = alt // {
-          x.file = { path = "/fixtures/filesrc"; inputs.dep.follows = "alt"; };
+          x.file = { path = "/fixtures/filesrc"; } // draw { dep.follows = "alt"; };
         };
         check = ''
           # Not just the path, which Nix takes for the enclosing work tree.
-          expect_eq msg "$(nix_eval_online path:"$T"/.populate/flakes/x#msg)" top:alt,sub
+          expect_eq msg "$(nix_eval_online path:${flake "x"}#msg)" top:alt,sub
         '';
       };
-    })
+    }))
     # Output of the same length, which rsync's quick check doesn't notice.
     (s "pipe-change" {
       prepareDeployer = ''
@@ -1011,17 +1217,17 @@ assert !(krops.isLocalTarget (targets.remote "/"));
         }
       ];
     })
-    (s "source-name" {
+    (modes "source-name" ({ draw, flake, ... }: {
       phases = twice {
         sources = {
           "alt-1.0".file = "/fixtures/alt";
-          x.file = { path = "/fixtures/filesrc"; inputs.dep.follows = "alt-1.0"; };
+          x.file = { path = "/fixtures/filesrc"; } // draw { dep.follows = "alt-1.0"; };
         };
         check = ''
-          expect_eq msg "$(nix_eval_online "$T"/.populate/flakes/x#msg)" top:alt,sub
+          expect_eq msg "$(nix_eval_online ${flake "x"}#msg)" top:alt,sub
         '';
       };
-    })
+    }))
     # An upload an interrupted run left behind.
     (s "upload-leftover" {
       phases = [

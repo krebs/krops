@@ -49,14 +49,30 @@ let
     fi
   '';
 
-  # Generates a flake for each source that draws inputs from other sources, in
-  # .populate/flakes/<name>.  Each flake re-exports the outputs of the flake in
-  # its source, with those inputs drawn from the other sources' flakes, and
-  # gets locked on every run, so its lock file matches the sources.
+  # Draws inputs of flakes in sources from other sources, and derives what the
+  # target paths of flake and flake-input sources that get patched, get their
+  # lock files rewritten, or are materialized get.  Sources get processed in
+  # the order they draw inputs from each other.
+  #
+  # Inputs get drawn by rewriting the lock file of the flake in the source
+  # with nix flake lock --override-input: in place for file and git sources,
+  # and in a copy for flake and flake-input sources.  Sources with rewriteLock
+  # set to false, and symlink sources, get a generated flake in
+  # .populate/flakes/<name> instead, which re-exports the outputs of the flake
+  # in the source, with those inputs drawn from the other sources.  Lock files
+  # get rewritten or generated on every run, so they match the sources.
   flakes = target: sources: let
-    flakesDir = "${target.path}/.populate/flakes";
-    generated = filterAttrs (_: source: flakeFollows source != []) sources;
-    names = attrNames generated;
+    sentinel = "${target.path}/.populate";
+    flakesDir = "${sentinel}/flakes";
+    derivedDir = "${sentinel}/derived";
+    patchesDir = "${sentinel}/patches";
+    drawing = filterAttrs (_: source: flakeFollows source != []) sources;
+    generated = filterAttrs (_: hasGeneratedFlake) sources;
+    derived = filterAttrs (_: derivesFlake) sources;
+    patched = filterAttrs
+      (_: source: source.${source.type}.patches or [] != [])
+      sources;
+    names = attrNames (drawing // derived);
     # Source names become input names in generated flakes, where Nix accepts
     # fewer names than populate.  Others get replaced by one derived from
     # them.
@@ -64,14 +80,15 @@ let
       if builtins.match "[a-zA-Z][a-zA-Z0-9_-]*" name != null && name != "self"
         then name
         else "source-${substring 0 16 (builtins.hashString "sha256" name)}";
-    drawnFrom = name: map (x: x.source) (flakeFollows generated.${name});
+    drawnFrom = name: map (x: x.source) (flakeFollows sources.${name});
     sorted = toposort (a: b: elem a (drawnFrom b)) names;
-    # Generated flakes refer to each other's generated flakes, so they don't
-    # need to repeat overrides.
+    # Shell word for the URL of the flake that inputs drawn from a source use:
+    # its generated flake, if it has one, so overrides don't need to be
+    # repeated, or else the flake in the source.
     url = name:
       if generated ? ${name}
-        then "path:${flakesDir}/${name}"
-        else "$(flake_url ${quote name})";
+        then quote "path:${flakesDir}/${name}"
+        else ''"$(flake_url ${quote name})"'';
     check = name: source:
       if source == name then
         throw "krops: source ${name} draws inputs from itself"
@@ -79,6 +96,147 @@ let
         throw "krops: source ${name} draws inputs from missing source ${source}"
       else
         source;
+    # Sets the positional parameters to nix flake lock's arguments for
+    # drawing the inputs of the flake in source name from other sources.
+    overrideArgs = name: /* sh */ ''
+      set --
+      ${concatMapStrings (x: /* sh */ ''
+        set -- "$@" --override-input ${quote (concatStringsSep "/" x.path)} ${url (check name x.source)}
+      '') (flakeFollows sources.${name})}
+    '';
+    # Rewrites the lock file of the flake in a file or git source in place.
+    rewrite = name: /* sh */ ''
+      (
+        ${overrideArgs name}
+        nix flake lock "$@" "$(flake_url ${quote name})" >&2
+      )
+    '';
+    # Derives what the target path of a flake or flake-input source gets from
+    # what got delivered to .populate/derived/<name>/original: a copy, which
+    # gets patched and gets its lock file rewritten.  Unless materialized,
+    # the copy gets added to the store, and the target path becomes a link to
+    # it.  Copies get made again only if what they derive from changes:
+    # materialized ones if the delivered store path, the patches, or what
+    # inputs get drawn from which sources changes, and others also if the
+    # sources they draw inputs from change.
+    derive = name: let
+      source = sources.${name};
+      source' = source.${source.type};
+      rewriteLock = source'.rewriteLock && drawing ? ${name};
+      targetPath = "${target.path}/${name}";
+      dir = "${derivedDir}/${name}";
+      spec = toJSON {
+        inherit (source') materialize;
+        inherit rewriteLock;
+        follows = flakeFollows source;
+      };
+      # Globbing is off, so patches get listed with ls, in order.
+      applyPatches = optionalString (source'.patches != []) /* sh */ ''
+        ls ${quote "${patchesDir}/${name}"} | while read -r patch; do
+          if ! patch -p1 -s --batch --no-backup-if-mismatch \
+              -i ${quote "${patchesDir}/${name}"}/"$patch" >&2; then
+            >&2 printf 'error: patch %s does not apply to source %s\n' \
+                "$(printf %s "$patch" | cut -c6-)" ${quote name}
+            exit 1
+          fi
+        done
+      '';
+      # Removes the work directory, which an interrupted run may have left
+      # behind.
+      removeWork = /* sh */ ''
+        if test -e ${quote "${dir}/work"}; then
+          chmod -R u+w ${quote "${dir}/work"}
+          rm -fR ${quote "${dir}/work"}
+        fi
+      '';
+    in /* sh */ ''
+      (
+        original=$(readlink -f ${quote "${dir}/original"})
+        path=$(printf '%s\n' "$original" | cut -d/ -f1-4)
+        subdir=''${original#"$path"}
+        subdir=''${subdir#/}
+        key=$(
+          {
+            printf '%s\n' "$original" ${quote spec}
+            ${optionalString (source'.patches != []) /* sh */ ''
+              ls ${quote "${patchesDir}/${name}"} | while read -r patch; do
+                sha256sum ${quote "${patchesDir}/${name}"}/"$patch"
+              done
+            ''}
+            ${optionalString (rewriteLock && !source'.materialize) /* sh */ ''
+              ${overrideArgs name}
+              printf '%s\n' "$@"
+              # Sources outside the store can change without changing their
+              # path.
+              for arg; do
+                case $arg in
+                  path:/nix/store/*) ;;
+                  path:*|git+file:*)
+                    arg=''${arg#*:}
+                    nix-hash --type sha256 "''${arg%%\?*}"
+                    ;;
+                esac
+              done
+            ''}
+          } | sha256sum | cut -c-64
+        )
+        ${removeWork}
+        ${if source'.materialize then /* sh */ ''
+          if ! test -e ${quote "${dir}/key"} ||
+              test "$(cat ${quote "${dir}/key"})" != "$key" ||
+              test -L ${quote targetPath} ||
+              ! test -d ${quote targetPath}; then
+            cp -R "$original" ${quote "${dir}/work"}
+            chmod -R u+w ${quote "${dir}/work"}
+            (
+              cd ${quote "${dir}/work"}
+              ${applyPatches}
+            )
+            rm -fR ${quote targetPath}
+            mv ${quote "${dir}/work"} ${quote targetPath}
+            printf '%s\n' "$key" > ${quote "${dir}/key"}
+          fi
+          ${optionalString rewriteLock /* sh */ ''
+            ${overrideArgs name}
+            nix flake lock "$@" "$(flake_url ${quote name})" >&2
+          ''}
+        '' else /* sh */ ''
+          if test -e ${quote "${dir}/key"} &&
+              test "$(cat ${quote "${dir}/key"})" = "$key" &&
+              result=$(readlink ${quote "${dir}/result"}) &&
+              nix-store --check-validity "$result" 2>/dev/null; then
+            :
+          else
+            # The copy keeps the name of the delivered store path.
+            work=${quote "${dir}/work"}/$(basename "$path" | cut -c34-)
+            mkdir ${quote "${dir}/work"}
+            cp -R "$path" "$work"
+            chmod -R u+w "$work"
+            (
+              cd "$work"/"$subdir"
+              ${applyPatches}
+            )
+            ${optionalString rewriteLock /* sh */ ''
+              ${overrideArgs name}
+              # Not just the path, which Nix takes for the enclosing Git
+              # work tree, if any.
+              nix flake lock "$@" "path:$work''${subdir:+?dir=$subdir}" >&2
+            ''}
+            result=$(nix-store --add-fixed --recursive sha256 "$work")
+            ${removeWork}
+            nix-store --realise "$result" \
+                --add-root ${quote "${dir}/result"} --indirect >/dev/null
+            printf '%s\n' "$key" > ${quote "${dir}/key"}
+          fi
+          if test -d ${quote targetPath} && ! test -L ${quote targetPath}; then
+            rm -fR ${quote targetPath}
+          fi
+          # .populate/derived/<name>/result roots the store path.
+          ln -fns "$result''${subdir:+/$subdir}" ${quote targetPath}
+        ''}
+      )
+    '';
+    # Generates the flake of a source in .populate/flakes/<name>.
     flake = name: let
       follows = flakeFollows generated.${name};
       drawn = unique (map (x: check name x.source) follows);
@@ -131,13 +289,36 @@ let
         nix flake lock ${quote "path:${flakesDir}/${name}"} >&2
       )
     '';
+    process = name:
+      optionalString (derived ? ${name}) (derive name) +
+      (if generated ? ${name} then flake name
+       else if drawing ? ${name} && !(derived ? ${name}) then rewrite name
+       else "");
+    # Removes the entries of directory dir that aren't in names.
+    removeOthers = dir: names: /* sh */ ''
+      if test -d ${quote dir}; then
+        ls -A ${quote dir} | while read -r name; do
+          case ${quote " ${toString names} "} in
+            *" $name "*) ;;
+            *)
+              chmod -R u+w ${quote dir}/"$name"
+              rm -fR ${quote dir}/"$name"
+              ;;
+          esac
+        done
+        if test -z "$(ls -A ${quote dir})"; then
+          rmdir ${quote dir}
+        fi
+      fi
+    '';
   in
     if sorted ? cycle then
       throw "krops: sources draw inputs from each other: ${toString sorted.cycle}"
     else runShell target /* sh */ ''
       set -efu
       ${optionalString (names != []) /* sh */ ''
-        ${requireFlakes "drawing flake inputs from sources"}
+        ${optionalString (drawing != {})
+          (requireFlakes "drawing flake inputs from sources")}
 
         # Prints the flake URL of the source named $1.
         flake_url() {
@@ -158,42 +339,43 @@ let
         }
 
         # Inputs can only be drawn into flakes, so check all sources before
-        # generating anything.
+        # changing anything.
         missing=
-        for name in ${concatMapStringsSep " " quote names}; do
-          if ! test -e ${quote target.path}/"$name"/flake.nix; then
-            missing="$missing $name"
+        ${concatMapStrings (name: /* sh */ ''
+          if ! test -e ${quote (
+            if derived ? ${name}
+              then "${derivedDir}/${name}/original"
+              else "${target.path}/${name}"
+          )}/flake.nix; then
+            missing="$missing "${quote name}
           fi
-        done
+        '') (attrNames drawing)}
         if test -n "$missing"; then
           >&2 printf 'error: source %s draws flake inputs from other sources, but contains no flake.nix\n' $missing
           exit 1
         fi
 
-        ${sentinelDirectory "${target.path}/.populate"}
-        mkdir -p ${quote flakesDir}
-        ${concatMapStrings flake sorted.result}
+        ${optionalString (generated != {}) /* sh */ ''
+          ${sentinelDirectory sentinel}
+          mkdir -p ${quote flakesDir}
+        ''}
+        ${concatMapStrings process sorted.result}
       ''}
       # Remove roots of flake inputs of sources that are neither flake nor
       # flake-input sources anymore.
       ${concatMapStrings (name: /* sh */ ''
-        rm -fR ${quote "${target.path}/.populate/flake-inputs/${name}"}
+        rm -fR ${quote "${sentinel}/flake-inputs/${name}"}
       '') (attrNames (filterAttrs
         (_: source: !elem source.type [ "flake" "flake-input" ])
         sources))}
-      if test -d ${quote "${target.path}/.populate/flake-inputs"} &&
-          test -z "$(ls -A ${quote "${target.path}/.populate/flake-inputs"})"; then
-        rmdir ${quote "${target.path}/.populate/flake-inputs"}
+      if test -d ${quote "${sentinel}/flake-inputs"} &&
+          test -z "$(ls -A ${quote "${sentinel}/flake-inputs"})"; then
+        rmdir ${quote "${sentinel}/flake-inputs"}
       fi
-      # Remove flakes of sources that no longer draw inputs from other sources.
-      if test -d ${quote flakesDir}; then
-        ls -A ${quote flakesDir} | while read -r name; do
-          case ${quote " ${toString names} "} in
-            *" $name "*) ;;
-            *) rm -fR ${quote flakesDir}/"$name" ;;
-          esac
-        done
-      fi
+      # Remove what sources left behind that don't need it anymore.
+      ${removeOthers flakesDir (attrNames generated)}
+      ${removeOthers derivedDir (attrNames derived)}
+      ${removeOthers patchesDir (attrNames patched)}
     '';
 
   # Removes entries of the target directory that aren't sources, garbage
@@ -263,6 +445,31 @@ let
     nix' = "${nix}/bin/nix --extra-experimental-features ${quote "nix-command flakes"}";
     inputPath = if source.name == null then [] else splitString "/" source.name;
     fetchOnTarget = source.fetchOnTarget or false;
+    name = baseNameOf target.path;
+    sentinel = "${dirOf target.path}/.populate";
+    # A source that gets patched, gets its lock file rewritten, or is
+    # materialized gets linked in .populate/derived/<name> instead of at the
+    # target path, and the flakes step derives what the target path gets.
+    derived = derivesFlake { type = "flake"; flake = source; };
+    linkPath =
+      if derived then "${sentinel}/derived/${name}/original" else target.path;
+    patches = source.patches or [];
+    # Uploads the patches to .populate/patches/<name>, numbered in order.
+    uploadPatches = optionalString (patches != []) /* sh */ ''
+      rm -fR "$PWD"/patches
+      mkdir "$PWD"/patches
+      ${concatImapStrings (i: patch: /* sh */ ''
+        cp ${quote patch} "$PWD"/patches/${quote "${fixedWidthNumber 4 i}-${baseNameOf patch}"}
+      '') patches}
+      ${runShell target /* sh */ ''
+        set -efu
+        ${sentinelDirectory sentinel}
+        mkdir -p ${quote "${sentinel}/patches"}
+      ''}
+      ${rsync' (target // { path = "${sentinel}/patches/${name}"; })
+               (rsyncDefaultConfig // { filterFiles = false; useChecksum = true; })
+               /* sh */ ''"$PWD"/patches''}
+    '';
     # Tells whether a flake reference names a scheme that doesn't refer to the
     # deploying machine, so the target can fetch the flake on its own.
     # Indirect references get resolved on the deploying machine.
@@ -320,12 +527,11 @@ let
         fi
       }
     '';
-    sentinel = "${dirOf target.path}/.populate";
     # Directory of garbage collector roots for the input's own inputs.
-    inputsRoots = "${sentinel}/flake-inputs/${baseNameOf target.path}";
+    inputsRoots = "${sentinel}/flake-inputs/${name}";
     # Directory receiving the flake itself if the target can't fetch it.
     uploads = "${sentinel}/flake-uploads";
-    upload = "${uploads}/${baseNameOf target.path}";
+    upload = "${uploads}/${name}";
     removeUpload = /* sh */ ''
       if test -e ${quote upload}; then
         chmod -R u+w ${quote upload}
@@ -339,26 +545,30 @@ let
     '';
     # Reads the subdirectory containing the flake or input, which may be
     # empty, followed by store paths from stdin.  Links the first store path,
-    # or the subdirectory therein, at the target path, and registers it and
+    # or the subdirectory therein, at the link path, and registers it and
     # the remaining ones as garbage collector roots.  Roots get added before
     # obsolete ones get removed, so the inputs stay rooted.
     link = /* sh */ ''
       set -efu
       read -r dir
       read -r path
+      ${optionalString derived /* sh */ ''
+        ${sentinelDirectory sentinel}
+        mkdir -p ${quote (dirOf linkPath)}
+      ''}
       # nix-store --add-root only replaces links into the store.
-      if test -L ${quote target.path}; then
-        case $(readlink ${quote target.path}) in
+      if test -L ${quote linkPath}; then
+        case $(readlink ${quote linkPath}) in
           /nix/store/*) ;;
-          *) rm ${quote target.path} ;;
+          *) rm ${quote linkPath} ;;
         esac
-      elif test -e ${quote target.path}; then
-        rm -fR ${quote target.path}
+      elif test -e ${quote linkPath}; then
+        rm -fR ${quote linkPath}
       fi
-      nix-store --realise "$path" --add-root ${quote target.path} --indirect >/dev/null
+      nix-store --realise "$path" --add-root ${quote linkPath} --indirect >/dev/null
       # The garbage collector follows the link into the store path.
       if test -n "$dir"; then
-        ln -fns "$path/$dir" ${quote target.path}
+        ln -fns "$path/$dir" ${quote linkPath}
       fi
 
       ${sentinelDirectory sentinel}
@@ -495,9 +705,10 @@ let
     if !fetchOnTarget && !isLocalTarget target && target.sudo then
       throw "krops: source ${target.path}: copying flakes to targets with sudo is not supported"
     else if fetchOnTarget && source.name == null && isRemoteRef source.url then
-      runShell target archiveAndLink
+      uploadPatches + runShell target archiveAndLink
     else /* sh */ ''
       set -efu
+      ${uploadPatches}
 
       ${cached "metadata" /* sh */ ''
         ${nix'} flake metadata --json --no-update-lock-file ${quote source.url}

@@ -172,13 +172,13 @@ build` step.
 
 Name of the source containing the flake to deploy, optionally followed by `#`
 and the name of the NixOS configuration, e.g. `"myconf#myhost"`.  If the source
-draws inputs from other sources, its generated flake gets deployed, see
-[Flake inputs from sources](#flake-inputs-from-sources).  This makes
-`nixos-rebuild` use `--flake`, and requires Nix with flake support (Nix 2.4 or
-later) on the build target.  Without the name of the NixOS configuration,
-`nixos-rebuild` uses the host name of the build target.  Without `flake`,
-`nixos-rebuild` gets `--no-flake` if `/etc/nixos/flake.nix` exists on the
-build target, so it deploys `NIX_PATH` instead of that flake.
+draws inputs from other sources through a generated flake, that flake gets
+deployed, see [Flake inputs from sources](#flake-inputs-from-sources).  This
+makes `nixos-rebuild` use `--flake`, and requires Nix with flake support (Nix
+2.4 or later) on the build target.  Without the name of the NixOS
+configuration, `nixos-rebuild` uses the host name of the build target.
+Without `flake`, `nixos-rebuild` gets `--no-flake` if `/etc/nixos/flake.nix`
+exists on the build target, so it deploys `NIX_PATH` instead of that flake.
 
 ### `force` (optional, defaults to false)
 
@@ -347,6 +347,12 @@ Supported attributes:
   inputs of the flake in this source to draw from other sources, see
   [Flake inputs from sources](#flake-inputs-from-sources).
 
+* `rewriteLock` (optional) -
+  boolean that controls whether inputs get drawn from other sources by
+  rewriting the lock file of the flake in this source, or else through a
+  generated flake, see [Flake inputs from sources](#flake-inputs-from-sources).
+  Defaults to `true`.
+
 
 ### `flake`
 
@@ -388,6 +394,27 @@ Supported attributes:
 * `inputs` (optional) -
   inputs of the flake in this source to draw from other sources, see
   [Flake inputs from sources](#flake-inputs-from-sources).
+
+* `materialize` (optional) -
+  boolean that controls whether the target path becomes a writable copy
+  instead of a link into the store.  The copy gets made again only if what
+  it derives from changes: the delivered store path, the patches, or which
+  inputs get drawn from which sources.  Until then, changes made to it on the
+  target stay.  Nix copies it into the store whenever evaluating a flake
+  changed it, which is noticeable for big flakes like nixpkgs.  For a flake
+  in a subdirectory, only that subdirectory gets copied.  Defaults to
+  `false`.
+
+* `patches` (optional) -
+  list of paths of patches on the deploying machine, which get applied in
+  order with `patch -p1` on the target, in the directory the target path
+  shows.  Populating fails if a patch doesn't apply.  Defaults to `[]`.
+
+* `rewriteLock` (optional) -
+  boolean that controls whether inputs get drawn from other sources by
+  rewriting the lock file of the flake in this source, or else through a
+  generated flake, see [Flake inputs from sources](#flake-inputs-from-sources).
+  Defaults to `true`.
 
 Instead of an attribute set, the flake reference can be given as a string.
 
@@ -439,6 +466,27 @@ Supported attributes:
   inputs of the flake in this source to draw from other sources, see
   [Flake inputs from sources](#flake-inputs-from-sources).
 
+* `materialize` (optional) -
+  boolean that controls whether the target path becomes a writable copy
+  instead of a link into the store.  The copy gets made again only if what
+  it derives from changes: the delivered store path, the patches, or which
+  inputs get drawn from which sources.  Until then, changes made to it on the
+  target stay.  Nix copies it into the store whenever evaluating a flake
+  changed it, which is noticeable for big flakes like nixpkgs.  For a flake
+  in a subdirectory, only that subdirectory gets copied.  Defaults to
+  `false`.
+
+* `patches` (optional) -
+  list of paths of patches on the deploying machine, which get applied in
+  order with `patch -p1` on the target, in the directory the target path
+  shows.  Populating fails if a patch doesn't apply.  Defaults to `[]`.
+
+* `rewriteLock` (optional) -
+  boolean that controls whether inputs get drawn from other sources by
+  rewriting the lock file of the flake in this source, or else through a
+  generated flake, see [Flake inputs from sources](#flake-inputs-from-sources).
+  Defaults to `true`.
+
 Without `fetchOnTarget`, the same requirements as for the `flake` source type
 apply.
 
@@ -476,6 +524,12 @@ Supported attributes:
 * `inputs` (optional) -
   inputs of the flake in this source to draw from other sources, see
   [Flake inputs from sources](#flake-inputs-from-sources).
+
+* `rewriteLock` (optional) -
+  boolean that controls whether inputs get drawn from other sources by
+  rewriting the lock file of the flake in this source, or else through a
+  generated flake, see [Flake inputs from sources](#flake-inputs-from-sources).
+  Defaults to `true`.
 
 
 ### `pass`
@@ -568,20 +622,32 @@ like `NIX_PATH` does for Nix expressions.
 }
 ```
 
-For each source that draws inputs from other sources, populate generates a
-flake in `.populate/flakes/<name>`, which re-exports the outputs of the flake
-in the source, with those inputs drawn from the other sources.  The source
-itself stays as it is, so `NIX_PATH` still refers to it.  When a generated
-flake draws an input from a source that has a generated flake itself, it uses
-that one, so in the example above, myconf's crate2nix uses nixpkgs from the
-`nixpkgs` source as well.  `writeDeploy`'s `flake` parameter uses a source's
-generated flake automatically.
+Populate rewrites the lock file of the flake in each source that draws
+inputs from other sources, using `nix flake lock --override-input`, so the
+flake in the source itself uses the other sources.  `file` and `git` sources
+get their lock file rewritten in place.  `flake` and `flake-input` sources
+get delivered as a copy with the rewritten lock file, which gets added to the
+store, unless materialized, so the target path links to that instead of the
+delivered store path, as it does for patched ones.  A source drawing an input
+from a source that draws inputs itself uses that source as rewritten, so in
+the example above, myconf's crate2nix uses nixpkgs from the `nixpkgs` source as
+well.
+
+With `rewriteLock = false`, and for `symlink` sources, which point at other
+sources, the source stays as it is, and populate generates a flake in
+`.populate/flakes/<name>` instead, which re-exports the outputs of the flake
+in the source, with those inputs drawn from the other sources.  A source
+drawing an input from a source with a generated flake uses that flake.
+`writeDeploy`'s `flake` parameter uses a source's generated flake
+automatically.
 
 Sources in a Git work tree are referred to as `git+file:` (with submodules if
-there are any), all other sources as `path:`, with symlinks resolved.
-Generated flakes get locked on every run, so their lock files match the
-sources, and get removed once their sources no longer draw inputs from other
-sources.  This requires Nix with flake support (Nix 2.4 or later) on the
+there are any), all other sources as `path:`, with symlinks resolved.  Lock
+files get rewritten or generated on every run, so they match the sources.
+Copies of `flake` and `flake-input` sources get made again only if the
+delivered store path, the patches, or the sources they draw inputs from
+change.  Generated flakes and copies get removed once their sources no longer
+need them.  This requires Nix with flake support (Nix 2.4 or later) on the
 target.  Populating fails if a source that draws inputs from other sources
 contains no `flake.nix`.  Sources that inputs get drawn from don't need to be
 flakes, as long as the inputs drawing from them are declared with
@@ -594,7 +660,8 @@ flakes, as long as the inputs drawing from them are declared with
 for features spanning sources, such as flake inputs from sources, one for edge
 cases of flakes, such as unusual lock files, and one for the arguments
 `writeDeploy` passes to `nixos-rebuild`.  The tests deploy every combination
-of a source type's options to the deploying machine itself, to a remote target
+of a source type's options, except for patches, which the features test
+covers, to the deploying machine itself, to a remote target
 as `root`, and to a remote target using `sudo`, and check the result after
 deploying and after deploying again.
 The tests require KVM and nixpkgs with `pkgs.testers.runNixOSTest`

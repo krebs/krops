@@ -336,3 +336,26 @@ cat > /fixtures/pipe <<'SH'
 echo piped
 SH
 chmod +x /fixtures/pipe
+
+# patches: hello and hello2 change dep's greeting, hello2 only after hello;
+# sub changes the flake in mono's subdirectory; bad applies to nothing.
+mkdir -p /fixtures/patches
+# Prints a patch of file $1 in the directory $2, replacing $3 by $4.
+patch_of() {
+  sed "s/$3/$4/" "$2/$1" > /fixtures/patches/new
+  diff -u --label a/"$1" --label b/"$1" "$2/$1" /fixtures/patches/new || test $? = 1
+  rm /fixtures/patches/new
+}
+patch_of flake.nix /fixtures/www/src/dep 'dep+' 'hello+' > /fixtures/patches/hello.patch
+mkdir /fixtures/patches/dep-hello
+sed 's/dep+/hello+/' /fixtures/www/src/dep/flake.nix > /fixtures/patches/dep-hello/flake.nix
+patch_of flake.nix /fixtures/patches/dep-hello 'hello+' 'hello2+' > /fixtures/patches/hello2.patch
+rm -R /fixtures/patches/dep-hello
+patch_of flake.nix /fixtures/www/src/mono/sub '"sub"' '"patched"' > /fixtures/patches/sub.patch
+cat > /fixtures/patches/bad.patch <<'PATCH'
+--- a/flake.nix
++++ b/flake.nix
+@@ -1 +1 @@
+-nothing like this
++anything
+PATCH

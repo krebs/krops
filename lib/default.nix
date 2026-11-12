@@ -42,6 +42,23 @@ let {
     in
       flatten [] (source.${source.type}.inputs or {});
 
+    # Tells whether a source's inputs get drawn from other sources by a
+    # generated flake in .populate/flakes, instead of by rewriting the lock
+    # file of the flake in the source.  Symlink sources point at other
+    # sources, whose lock files stay as they are.
+    hasGeneratedFlake = source:
+      lib.flakeFollows source != [] &&
+      (source.type == "symlink" || !(source.${source.type}.rewriteLock or true));
+
+    # Tells whether a flake or flake-input source gets delivered as a copy,
+    # which gets patched, gets its lock file rewritten, or is materialized.
+    derivesFlake = source: let
+      source' = source.${source.type};
+    in
+      lib.elem source.type [ "flake" "flake-input" ] &&
+      (source'.materialize or false || source'.patches or [] != [] ||
+       (source'.rewriteLock or true && lib.flakeFollows source != []));
+
     maybeHostName = default: let
       # We're parsing /etc/hostname here because reading
       # /proc/sys/kernel/hostname yields ""

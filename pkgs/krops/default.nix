@@ -124,7 +124,7 @@ in
       if flake == null then null
       else if !(source ? ${name}) then
         throw "krops: flake ${name} is not a source"
-      else if lib.flakeFollows source.${name} != [] then
+      else if lib.hasGeneratedFlake source.${name} then
         ".populate/flakes/${flake}"
       else
         flake;
