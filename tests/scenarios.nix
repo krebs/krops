@@ -358,6 +358,8 @@ assert !(krops.isLocalTarget (targets.remote "/"));
       }
       test -e "$T"/x/two || fail "two missing"
     '' + optionalString flags.inputs ''
+      grep -q '"git+file:' "$T"/.populate/flakes/x/flake.nix ||
+        fail "the Git work tree isn't referred to as git+file:"
       gc
       expect_eq msg "$(nix_eval "$T"/.populate/flakes/x#msg)" git:alt
     '';
@@ -559,6 +561,26 @@ assert !(krops.isLocalTarget (targets.remote "/"));
         '';
       };
     })
+    # A generated flake gets locked again when a source it draws from
+    # changes.
+    (s "relock" (let
+      x.file = { path = "/fixtures/filesrc"; inputs.dep.follows = "a"; };
+    in {
+      phases = [
+        {
+          sources = { inherit x; a.file = "/fixtures/alt"; };
+          check = ''
+            expect_eq msg "$(nix_eval_online "$T"/.populate/flakes/x#msg)" top:alt,sub
+          '';
+        }
+        {
+          sources = { inherit x; a.file = "/fixtures/alt2"; };
+          check = ''
+            expect_eq msg "$(nix_eval_online "$T"/.populate/flakes/x#msg)" top:alt2,sub
+          '';
+        }
+      ];
+    }))
     # A generated flake gets removed once its source draws no inputs anymore.
     (s "removal" {
       phases = [

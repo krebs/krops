@@ -252,6 +252,12 @@ SH
 chmod +x /fixtures/pipe2
 echo piped > /fixtures/pipe2-data
 
+# alt2: like alt, with other outputs, to change a source to.
+mkdir /fixtures/alt2
+cat > /fixtures/alt2/flake.nix <<'NIX'
+{ outputs = _: { greeting = "alt2"; who = "alt2"; }; }
+NIX
+
 # noflake: a directory without flake.nix.
 mkdir /fixtures/noflake
 echo noflake > /fixtures/noflake/README
