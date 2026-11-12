@@ -28,7 +28,13 @@ let
     # system, they survive the scenarios collecting garbage.
     system.extraDependencies = [ plan "${./fixtures.sh}" ];
     nix.settings.substituters = lib.mkForce [];
-    environment.systemPackages = [ pkgs.git pkgs.rsync ];
+    environment.systemPackages = [
+      pkgs.git
+      pkgs.rsync
+      (pkgs.writeScriptBin "nixos-rebuild" (builtins.readFile ./nixos-rebuild.sh))
+    ];
+    # The stand-in replaces nixos-rebuild.
+    system.disableInstallerTools = true;
     # Only warnings and errors on the console, which ends up in the log.
     services.journald.extraConfig = lib.mkAfter "MaxLevelConsole=warning";
     boot.initrd.systemd.contents."/etc/systemd/journald.conf".text =

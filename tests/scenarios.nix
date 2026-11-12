@@ -3,9 +3,9 @@
 # a remote target using sudo, plus scenarios for features spanning sources.
 #
 # A scenario prepares the target directory, then runs its phases.  Each phase
-# runs populate, expecting it to succeed or to fail with a message, and checks
-# the result on the target.  Phases expecting evaluation to fail get checked
-# here and don't run.
+# runs populate, or writeDeploy with a stand-in for nixos-rebuild, expecting
+# it to succeed or to fail with a message, and checks the result on the
+# target.  Phases expecting evaluation to fail get checked here and don't run.
 {
   # nixpkgs' lib.
   lib,
@@ -13,6 +13,8 @@
   krops,
   # Function from populate's arguments to the command running populate.
   populate,
+  # krops' writeDeploy.
+  writeDeploy,
   # Where the deploying machine serves /fixtures/www via HTTP.
   url,
   # URL of the Git repository /fixtures/git/gitsrc.git.
@@ -28,7 +30,7 @@
 let
   inherit (lib)
     attrNames concatMap concatStringsSep foldl' isBool mapAttrsToList
-    optional optionalAttrs optionalString;
+    optional optionalAttrs optionals optionalString;
 
   prelude = ". ${./lib.sh}\n";
 
@@ -60,16 +62,22 @@ let
   alt = { alt.file = "/fixtures/alt"; };
 
   # Builds a scenario from a name, a target kind, and phases with sources.
-  scenario = { name, targetKind, prepare ? "", phases }: let
+  scenario = { name, targetKind, node ? null, prepare ? "", phases }: let
     path = "/var/krops/${name}";
     target = targets.${targetKind} path;
     vars = "T=${path}\n";
-    phase = { sources, prune ? false, expect ? "success", check ? "", mutate ? null }: let
-      command = populate {
+    phase = {
+      sources, prune ? false, deploy ? null,
+      expect ? "success", check ? "", mutate ? null,
+    }: let
+      args = {
         source = krops.evalSource [ sources ];
         inherit prune target;
         force = true;
       };
+      command =
+        if deploy == null then populate args
+        else writeDeploy "deploy" (args // { useNixOutputMonitor = false; } // deploy);
       evaluated = builtins.tryEval (builtins.seq (toString command) true);
     in
       if expect == "eval-error" then
@@ -85,7 +93,10 @@ let
       };
   in {
     inherit name;
-    node = if targetKind == "local" then "deployer" else "target";
+    node =
+      if node != null then node
+      else if targetKind == "local" then "deployer"
+      else "target";
     prepare = prelude + vars + ''
       rm -fR "$T"
     '' + prepare;
@@ -403,6 +414,52 @@ in {
       '';
     };
   });
+
+  # writeDeploy's arguments to nixos-rebuild, which a stand-in records.
+  deploy = matrix "deploy" {
+    flake = [ false true ];
+    buildTarget = [ false true ];
+  } (flags: ctx: let
+    target = targets.${ctx.targetKind} ctx.path;
+    buildTarget = targets.local "${ctx.path}-build";
+    build = if flags.buildTarget then buildTarget else target;
+    expected = [ "switch" ]
+      ++ optionals flags.buildTarget [
+        "--build-host" "${buildTarget.user}@${buildTarget.host}"
+        "--target-host" "${target.user}@${target.host}"
+      ]
+      ++ optional (flags.buildTarget && target.sudo) "--use-remote-sudo"
+      ++ optionals flags.flake [ "--flake" "${build.path}/x" ];
+  in
+    # The local target can't have another build target.
+    if flags.buildTarget && ctx.targetKind == "local" then null else {
+      node = if flags.buildTarget then "deployer" else null;
+      prepare = ''
+        rm -f /tmp/nixos-rebuild.log
+      '';
+      phases = twice {
+        sources.x =
+          if flags.flake then {
+            flake = {
+              flake = "/fixtures/top";
+              fetchOnTarget = ctx.targetKind == "sudo";
+            };
+          } else {
+            file = "/fixtures/alt";
+          };
+        deploy = {
+          flake = if flags.flake then "x" else null;
+        } // optionalAttrs flags.buildTarget {
+          inherit buildTarget;
+        };
+        check = ''
+          expect_eq user "$(sed -n 1p /tmp/nixos-rebuild.log)" 0
+          expect_eq NIX_PATH "$(sed -n 2p /tmp/nixos-rebuild.log)" ${build.path}
+          expect_eq arguments "$(sed -n 3p /tmp/nixos-rebuild.log)" \
+              ${lib.escapeShellArg (concatStringsSep " " expected)}
+        '';
+      };
+    });
 
   # Features spanning several sources.
   features = concatMap (targetKind: let

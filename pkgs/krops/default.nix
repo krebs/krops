@@ -135,7 +135,8 @@ in
         ] ++ lib.optionals (buildTarget' != target') [
           "--build-host" "${buildTarget'.user}@${buildTarget'.host}"
           "--target-host" "${target'.user}@${target'.host}"
-        ] ++ lib.optionals target'.sudo [
+        ] ++ lib.optionals (buildTarget' != target' && target'.sudo) [
+          # nixos-rebuild runs on the target itself via sudo otherwise.
           "--use-remote-sudo"
         ]) buildTarget'}
       ''
