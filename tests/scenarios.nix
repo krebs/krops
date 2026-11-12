@@ -808,6 +808,25 @@ assert !(krops.isLocalTarget (targets.remote "/"));
         check = checkFlake { attr = "msg"; expected = "rel:lib"; };
       };
     })
+    (s "flake-to-file" {
+      phases = [
+        {
+          sources.x.flake = { flake = "/fixtures/top"; inherit fetchOnTarget; };
+          check = roots 3;
+          mutate = ''
+            readlink "$T"/x > "$T"/old
+          '';
+        }
+        {
+          sources.x.file = "/fixtures/alt";
+          check = ''
+            test ! -L "$T"/x || fail "x is still a link to $(readlink "$T"/x)"
+            test -e "$T"/x/flake.nix || fail "flake.nix missing"
+            nix-store --verify-path "$(cat "$T"/old)" || fail "store path changed"
+          '' + roots 0;
+        }
+      ];
+    })
   ] ++ lib.optional (targetKind == "local")
     # The target has the path the input is locked to.
     (s "uselocal" {

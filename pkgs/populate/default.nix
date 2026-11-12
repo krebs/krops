@@ -158,6 +158,17 @@ let
         mkdir -p ${quote flakesDir}
         ${concatMapStrings flake sorted.result}
       ''}
+      # Remove roots of flake inputs of sources that are neither flake nor
+      # flake-input sources anymore.
+      ${concatMapStrings (name: /* sh */ ''
+        rm -fR ${quote "${target.path}/.populate/flake-inputs/${name}"}
+      '') (attrNames (filterAttrs
+        (_: source: !elem source.type [ "flake" "flake-input" ])
+        sources))}
+      if test -d ${quote "${target.path}/.populate/flake-inputs"} &&
+          test -z "$(ls -A ${quote "${target.path}/.populate/flake-inputs"})"; then
+        rmdir ${quote "${target.path}/.populate/flake-inputs"}
+      fi
       # Remove flakes of sources that no longer draw inputs from other sources.
       if test -d ${quote flakesDir}; then
         ls -A ${quote flakesDir} | while read -r name; do
@@ -767,6 +778,13 @@ let
   '';
 
   rsync' = target: config: sourcePath: /* sh */ ''
+    # rsync writes through a symlink at the target path, e.g. one a symlink or
+    # flake source left there, into what it points to.
+    ${runShell target /* sh */ ''
+      if test -L ${quote target.path}; then
+        rm ${quote target.path}
+      fi
+    ''}
     source_path=${sourcePath}
     if test -d "$source_path"; then
       source_path=$source_path/
