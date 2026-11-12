@@ -34,7 +34,7 @@
       flake = lib.mkOption {
         apply = x:
           if lib.types.str.check x
-            then { flake = x; }
+            then { url = x; }
             else x;
         default = null;
         type = lib.types.nullOr (lib.types.either lib.types.str source-types.flake);
@@ -178,7 +178,7 @@
           default = false;
           type = lib.types.bool;
         };
-        flake = lib.mkOption {
+        url = lib.mkOption {
           type = lib.types.str; # TODO lib.types.flake-ref
         };
         inputs = lib.mkOption {
@@ -193,7 +193,7 @@
           default = false;
           type = lib.types.bool;
         };
-        flake = lib.mkOption {
+        url = lib.mkOption {
           type = lib.types.str; # TODO lib.types.flake-ref
         };
         inputs = lib.mkOption {

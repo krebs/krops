@@ -277,7 +277,7 @@ let
     # several sources use the same flake.
     cached = kind: command: /* sh */ ''
       cache=$TMPDIR/flake-${kind}.$(
-        printf %s ${quote source.flake} |
+        printf %s ${quote source.url} |
         ${coreutils}/bin/sha256sum |
         ${coreutils}/bin/cut -c-32
       ).json
@@ -289,7 +289,7 @@ let
     '';
     noInput = /* sh */ ''
       >&2 printf 'error: flake %s has no input %s\n' \
-          ${quote source.flake} ${quote (toString source.name)}
+          ${quote source.url} ${quote (toString source.name)}
       exit 1
     '';
     # Shell function printing the store path $1, followed by the inputs its
@@ -409,7 +409,7 @@ let
         ${removeUpload}
         if test "$added" != "$self"; then
           >&2 printf 'error: flake %s arrived as %s instead of %s\n' \
-              ${quote source.flake} "$added" "$self"
+              ${quote source.url} "$added" "$self"
           exit 1
         fi
       fi
@@ -417,7 +417,7 @@ let
       # referring to local paths can only be fetched if the target has them
       # as well.
       fetched=$(
-        FLAKE=${quote source.flake} SELECTED=$selected SELF=$self \
+        FLAKE=${quote source.url} SELECTED=$selected SELF=$self \
         nix eval --impure --raw --expr '
           let
             selected = builtins.fromJSON (builtins.getEnv "SELECTED");
@@ -460,8 +460,8 @@ let
     archiveAndLink = /* sh */ ''
       set -efu
       ${requireFlakes "fetching flakes on the target"}
-      metadata=$(nix flake metadata --json --no-update-lock-file ${quote source.flake})
-      archive=$(nix flake archive --json --no-update-lock-file ${quote source.flake})
+      metadata=$(nix flake metadata --json --no-update-lock-file ${quote source.url})
+      archive=$(nix flake archive --json --no-update-lock-file ${quote source.url})
       lines=$(
         METADATA=$metadata ARCHIVE=$archive \
         nix eval --impure --raw --expr '
@@ -494,13 +494,13 @@ let
   in
     if !fetchOnTarget && !isLocalTarget target && target.sudo then
       throw "krops: source ${target.path}: copying flakes to targets with sudo is not supported"
-    else if fetchOnTarget && source.name == null && isRemoteRef source.flake then
+    else if fetchOnTarget && source.name == null && isRemoteRef source.url then
       runShell target archiveAndLink
     else /* sh */ ''
       set -efu
 
       ${cached "metadata" /* sh */ ''
-        ${nix'} flake metadata --json --no-update-lock-file ${quote source.flake}
+        ${nix'} flake metadata --json --no-update-lock-file ${quote source.url}
       ''}
 
       if ! selected=$(

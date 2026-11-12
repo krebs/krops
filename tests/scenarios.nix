@@ -326,7 +326,7 @@ assert !(krops.isLocalTarget (targets.remote "/"));
     phases = twice ({
       sources = {
         x.flake = {
-          inherit flake;
+          url = flake;
           inherit (flags) fetchOnTarget;
           inputs = optionalAttrs flags.inputs { dep.follows = "alt"; };
         };
@@ -355,7 +355,7 @@ assert !(krops.isLocalTarget (targets.remote "/"));
       phases = twice ({
         sources = {
           x.flake-input = {
-            flake = "/fixtures/top";
+            url = "/fixtures/top";
             inherit name;
             inherit (flags) fetchOnTarget;
             inputs = optionalAttrs inputs { inner.follows = "alt"; };
@@ -542,7 +542,7 @@ assert !(krops.isLocalTarget (targets.remote "/"));
             x.file = "/fixtures/alt";
           } else alt // {
             x.flake = {
-              flake = "/fixtures/top";
+              url = "/fixtures/top";
               fetchOnTarget = ctx.targetKind == "sudo";
               inputs = optionalAttrs (flags.flake == "generated") {
                 dep.follows = "alt";
@@ -577,9 +577,9 @@ assert !(krops.isLocalTarget (targets.remote "/"));
     (s "chain" {
       phases = twice {
         sources = alt // {
-          a.flake = { flake = "/fixtures/top"; inherit fetchOnTarget; inputs.dep.follows = "b"; };
+          a.flake = { url = "/fixtures/top"; inherit fetchOnTarget; inputs.dep.follows = "b"; };
           b.flake-input = {
-            flake = "/fixtures/top"; name = "dep"; inherit fetchOnTarget;
+            url = "/fixtures/top"; name = "dep"; inherit fetchOnTarget;
             inputs.inner.follows = "alt";
           };
         };
@@ -594,10 +594,10 @@ assert !(krops.isLocalTarget (targets.remote "/"));
       phases = twice {
         sources = alt // {
           x.flake = {
-            flake = "/fixtures/top"; inherit fetchOnTarget;
+            url = "/fixtures/top"; inherit fetchOnTarget;
             inputs.dep = { follows = "b"; inputs.inner.follows = "alt"; };
           };
-          b.flake-input = { flake = "/fixtures/top"; name = "dep"; inherit fetchOnTarget; };
+          b.flake-input = { url = "/fixtures/top"; name = "dep"; inherit fetchOnTarget; };
         };
         check = ''
           gc
@@ -630,7 +630,7 @@ assert !(krops.isLocalTarget (targets.remote "/"));
       phases = [
         {
           sources = alt // {
-            x.flake = { flake = "/fixtures/top"; inherit fetchOnTarget; inputs.dep.follows = "alt"; };
+            x.flake = { url = "/fixtures/top"; inherit fetchOnTarget; inputs.dep.follows = "alt"; };
           };
           check = ''
             test -e "$T"/.populate/flakes/x/flake.lock || fail "generated flake missing"
@@ -638,7 +638,7 @@ assert !(krops.isLocalTarget (targets.remote "/"));
         }
         {
           sources = alt // {
-            x.flake = { flake = "/fixtures/top"; inherit fetchOnTarget; };
+            x.flake = { url = "/fixtures/top"; inherit fetchOnTarget; };
           };
           check = ''
             test ! -e "$T"/.populate/flakes/x || fail "generated flake remains"
@@ -650,13 +650,13 @@ assert !(krops.isLocalTarget (targets.remote "/"));
     (s "retarget" {
       phases = [
         {
-          sources.x.flake-input = { flake = "/fixtures/top"; name = "dep"; inherit fetchOnTarget; };
+          sources.x.flake-input = { url = "/fixtures/top"; name = "dep"; inherit fetchOnTarget; };
           check = ''
             expect_eq roots "$(ls "$T"/.populate/flake-inputs/x | wc -l)" 1
           '';
         }
         {
-          sources.x.flake-input = { flake = "/fixtures/top"; name = "sub"; inherit fetchOnTarget; };
+          sources.x.flake-input = { url = "/fixtures/top"; name = "sub"; inherit fetchOnTarget; };
           check = ''
             test ! -e "$T"/.populate/flake-inputs/x || fail "roots remain"
           '' + checkFlake { attr = "who"; expected = "sub"; subdir = true; };
@@ -668,8 +668,8 @@ assert !(krops.isLocalTarget (targets.remote "/"));
     (s "prune" (let
       sources = {
         a.file = "/fixtures/alt";
-        b.flake = { flake = "/fixtures/top"; inherit fetchOnTarget; };
-        c.flake-input = { flake = "/fixtures/top"; name = "dep"; inherit fetchOnTarget; };
+        b.flake = { url = "/fixtures/top"; inherit fetchOnTarget; };
+        c.flake-input = { url = "/fixtures/top"; name = "dep"; inherit fetchOnTarget; };
         d.symlink = "a";
       };
     in {
@@ -754,14 +754,14 @@ assert !(krops.isLocalTarget (targets.remote "/"));
     })
     (s "noinput" {
       phases = [{
-        sources.x.flake-input = { flake = "/fixtures/top"; name = "nope"; inherit fetchOnTarget; };
+        sources.x.flake-input = { url = "/fixtures/top"; name = "nope"; inherit fetchOnTarget; };
         expect.fail = "error: flake /fixtures/top has no input nope";
       }];
     })
     # An input locked to a path the target doesn't have.
     (s "gone" {
       phases = [{
-        sources.x.flake = { flake = "/fixtures/usegone"; fetchOnTarget = true; };
+        sources.x.flake = { url = "/fixtures/usegone"; fetchOnTarget = true; };
         expect.fail = "error: flake /fixtures/usegone: input gone refers to /fixtures/gone, which does not exist on the target";
       }];
     })
@@ -786,13 +786,13 @@ assert !(krops.isLocalTarget (targets.remote "/"));
     # global registry, which it couldn't download.
     (s "indirect" {
       phases = twice {
-        sources.x.flake = { flake = "kropsremote"; inherit fetchOnTarget; };
+        sources.x.flake = { url = "kropsremote"; inherit fetchOnTarget; };
         check = checkFlake { attr = "msg"; expected = "remote:dep+inner"; };
       };
     })
     (s "remote-subdir" {
       phases = twice {
-        sources.x.flake = { flake = "${url}/mono.tar.gz?dir=sub"; inherit fetchOnTarget; };
+        sources.x.flake = { url = "${url}/mono.tar.gz?dir=sub"; inherit fetchOnTarget; };
         check = checkFlake { attr = "who"; expected = "sub"; subdir = true; };
       };
     })
@@ -800,7 +800,7 @@ assert !(krops.isLocalTarget (targets.remote "/"));
       phases = twice {
         sources = alt // {
           x.flake = {
-            flake = "git+file:/fixtures/monoin?dir=sub"; inherit fetchOnTarget;
+            url = "git+file:/fixtures/monoin?dir=sub"; inherit fetchOnTarget;
             inputs.dep.follows = "alt";
           };
         };
@@ -809,7 +809,7 @@ assert !(krops.isLocalTarget (targets.remote "/"));
     })
     (s "dirty" {
       phases = twice {
-        sources.x.flake = { flake = "/fixtures/dirty"; inherit fetchOnTarget; };
+        sources.x.flake = { url = "/fixtures/dirty"; inherit fetchOnTarget; };
         check = checkFlake { attr = "msg"; expected = "dirty:dep+inner,sub"; } + ''
           test ! -e "$T"/x/untracked || fail "untracked file delivered"
         '';
@@ -817,7 +817,7 @@ assert !(krops.isLocalTarget (targets.remote "/"));
     })
     (s "unlocked" {
       phases = [{
-        sources.x.flake = { flake = "/fixtures/unlocked"; inherit fetchOnTarget; };
+        sources.x.flake = { url = "/fixtures/unlocked"; inherit fetchOnTarget; };
         expect.fail = "requires lock file changes";
       }];
     })
@@ -832,16 +832,16 @@ assert !(krops.isLocalTarget (targets.remote "/"));
     })
     (s "noinput-nested" {
       phases = [{
-        sources.x.flake-input = { flake = "/fixtures/top"; name = "dep/nope"; inherit fetchOnTarget; };
+        sources.x.flake-input = { url = "/fixtures/top"; name = "dep/nope"; inherit fetchOnTarget; };
         expect.fail = "error: flake /fixtures/top has no input dep/nope";
       }];
     })
     (s "shared" {
       phases = twice {
         sources = {
-          x.flake = { flake = "/fixtures/top"; inherit fetchOnTarget; };
-          dep.flake-input = { flake = "/fixtures/top"; name = "dep"; inherit fetchOnTarget; };
-          sub.flake-input = { flake = "/fixtures/top"; name = "sub"; fetchOnTarget = true; };
+          x.flake = { url = "/fixtures/top"; inherit fetchOnTarget; };
+          dep.flake-input = { url = "/fixtures/top"; name = "dep"; inherit fetchOnTarget; };
+          sub.flake-input = { url = "/fixtures/top"; name = "sub"; fetchOnTarget = true; };
         };
         check = checkFlake { attr = "msg"; expected = "top:dep+inner,sub"; } + ''
           expect_eq dep "$(nix_eval "$T"/dep#greeting)" dep+inner
@@ -851,13 +851,13 @@ assert !(krops.isLocalTarget (targets.remote "/"));
     })
     (s "follows-empty" {
       phases = twice {
-        sources.x.flake = { flake = "/fixtures/nofollow"; fetchOnTarget = true; };
+        sources.x.flake = { url = "/fixtures/nofollow"; fetchOnTarget = true; };
         check = checkFlake { attr = "msg"; expected = "nofollow"; };
       };
     })
     (s "follows-cycle" {
       phases = twice {
-        sources.x.flake = { flake = "/fixtures/cyc"; fetchOnTarget = true; };
+        sources.x.flake = { url = "/fixtures/cyc"; fetchOnTarget = true; };
         check = checkFlake { attr = "msg"; expected = "cyc:cyca,cycb"; };
       };
     })
@@ -865,7 +865,7 @@ assert !(krops.isLocalTarget (targets.remote "/"));
     # parent's inner, which dep's inner follows.
     (s "follows-name" {
       phases = twice {
-        sources.x.flake-input = { flake = "/fixtures/follow"; name = "dep/inner"; inherit fetchOnTarget; };
+        sources.x.flake-input = { url = "/fixtures/follow"; name = "dep/inner"; inherit fetchOnTarget; };
         check = checkFlake { attr = "who"; expected = "inner2"; };
       };
     })
@@ -873,20 +873,20 @@ assert !(krops.isLocalTarget (targets.remote "/"));
     # evaluating it needs, not with the parent's inner, which it follows there.
     (s "follows-closure" {
       phases = twice {
-        sources.x.flake-input = { flake = "/fixtures/follow"; name = "dep"; inherit fetchOnTarget; };
+        sources.x.flake-input = { url = "/fixtures/follow"; name = "dep"; inherit fetchOnTarget; };
         check = checkFlake { attr = "greeting"; expected = "dep+inner"; } + roots 1;
       };
     })
     (s "relative-input" {
       phases = twice {
-        sources.x.flake = { flake = "/fixtures/rel"; fetchOnTarget = true; };
+        sources.x.flake = { url = "/fixtures/rel"; fetchOnTarget = true; };
         check = checkFlake { attr = "msg"; expected = "rel:lib"; };
       };
     })
     (s "flake-to-file" {
       phases = [
         {
-          sources.x.flake = { flake = "/fixtures/top"; inherit fetchOnTarget; };
+          sources.x.flake = { url = "/fixtures/top"; inherit fetchOnTarget; };
           check = roots 3;
           mutate = ''
             readlink "$T"/x > "$T"/old
@@ -911,7 +911,7 @@ assert !(krops.isLocalTarget (targets.remote "/"));
           '';
         }
         {
-          sources = alt // { x.flake = { flake = "/fixtures/top"; inherit fetchOnTarget; }; };
+          sources = alt // { x.flake = { url = "/fixtures/top"; inherit fetchOnTarget; }; };
           check = checkFlake { attr = "msg"; expected = "top:dep+inner,sub"; } + ''
             test -e "$T"/alt/flake.nix || fail "alt changed"
           '';
@@ -932,7 +932,7 @@ assert !(krops.isLocalTarget (targets.remote "/"));
     in {
       phases = [
         {
-          sources.x.flake-input = { flake = "/fixtures/top"; name = "nope"; inherit fetchOnTarget; };
+          sources.x.flake-input = { url = "/fixtures/top"; name = "nope"; inherit fetchOnTarget; };
           expect.fail = "error: flake /fixtures/top has no input nope";
           inherit checkDeployer;
         }
@@ -946,7 +946,7 @@ assert !(krops.isLocalTarget (targets.remote "/"));
       phases = twice {
         sources = {
           x.flake = {
-            flake = "/fixtures/top"; inherit fetchOnTarget;
+            url = "/fixtures/top"; inherit fetchOnTarget;
             inputs.dep = { follows = "b"; inputs.q.follows = "c2"; };
           };
           b.file = { path = "/fixtures/two"; inputs.p.follows = "c1"; };
@@ -1026,7 +1026,7 @@ assert !(krops.isLocalTarget (targets.remote "/"));
     (s "upload-leftover" {
       phases = [
         {
-          sources.x.flake = { flake = "/fixtures/top"; fetchOnTarget = true; };
+          sources.x.flake = { url = "/fixtures/top"; fetchOnTarget = true; };
           check = checkFlake { attr = "msg"; expected = "top:dep+inner,sub"; };
           mutate = ''
             mkdir -p "$T"/.populate/flake-uploads/x/tree
@@ -1034,7 +1034,7 @@ assert !(krops.isLocalTarget (targets.remote "/"));
           '';
         }
         {
-          sources.x.flake = { flake = "/fixtures/top"; fetchOnTarget = true; };
+          sources.x.flake = { url = "/fixtures/top"; fetchOnTarget = true; };
           check = checkFlake { attr = "msg"; expected = "top:dep+inner,sub"; };
         }
       ];
@@ -1043,7 +1043,7 @@ assert !(krops.isLocalTarget (targets.remote "/"));
     # The target has the path the input is locked to.
     (s "uselocal" {
       phases = twice {
-        sources.x.flake = { flake = "/fixtures/uselocal"; fetchOnTarget = true; };
+        sources.x.flake = { url = "/fixtures/uselocal"; fetchOnTarget = true; };
         check = checkFlake { attr = "msg"; expected = "uselocal:alt"; };
       };
     })

@@ -76,7 +76,7 @@ described below as `lib.<system>`, and its `lib` directory provides
       program = toString (krops.lib.${system}.writeDeploy "deploy" {
         source = lib.evalSource [{
           nixos-config.file = toString ./configuration.nix;
-          nixpkgs.flake-input = { flake = toString self; name = "nixpkgs"; };
+          nixpkgs.flake-input = { url = toString self; name = "nixpkgs"; };
         }];
         target = "root@YOUR_IP_ADDRESS_OR_HOST_NAME_HERE";
       });
@@ -380,7 +380,7 @@ Supported attributes:
   later) on the target, and works for targets using `sudo`.  Defaults to
   `false`.
 
-* `flake` -
+* `url` -
   flake reference, e.g. the absolute path of a directory containing a
   `flake.nix`.  Its lock file is used as is; populating fails if the lock
   file needs to be updated.
@@ -416,7 +416,7 @@ without network access.
 
 Supported attributes:
 
-* `flake` -
+* `url` -
   flake reference of the flake whose input gets delivered, e.g. the absolute
   path of a directory containing a `flake.nix`.  Its lock file is used as is;
   populating fails if the lock file needs to be updated.
@@ -447,7 +447,7 @@ Example:
 ```nix
 {
   nixpkgs.flake-input = {
-    flake = toString ./.;
+    url = toString ./.;
     name = "nixpkgs";
   };
 }
@@ -551,11 +551,11 @@ like `NIX_PATH` does for Nix expressions.
 ```nix
 {
   nixpkgs.flake-input = {
-    flake = toString ./.;
+    url = toString ./.;
     name = "nixpkgs";
   };
   crate2nix.flake = {
-    flake = "github:nix-community/crate2nix";
+    url = "github:nix-community/crate2nix";
     inputs.nixpkgs.follows = "nixpkgs";
   };
   myconf.file = {
