@@ -827,6 +827,22 @@ assert !(krops.isLocalTarget (targets.remote "/"));
         }
       ];
     })
+    (s "symlink-to-flake" {
+      phases = [
+        {
+          sources = alt // { x.symlink = "alt"; };
+          check = ''
+            expect_eq link "$(readlink "$T"/x)" alt
+          '';
+        }
+        {
+          sources = alt // { x.flake = { flake = "/fixtures/top"; inherit fetchOnTarget; }; };
+          check = checkFlake { attr = "msg"; expected = "top:dep+inner,sub"; } + ''
+            test -e "$T"/alt/flake.nix || fail "alt changed"
+          '';
+        }
+      ];
+    })
   ] ++ lib.optional (targetKind == "local")
     # The target has the path the input is locked to.
     (s "uselocal" {

@@ -395,7 +395,13 @@ let
       set -efu
       read -r dir
       read -r path
-      if test -e ${quote target.path} && ! test -L ${quote target.path}; then
+      # nix-store --add-root only replaces links into the store.
+      if test -L ${quote target.path}; then
+        case $(readlink ${quote target.path}) in
+          /nix/store/*) ;;
+          *) rm ${quote target.path} ;;
+        esac
+      elif test -e ${quote target.path}; then
         rm -fR ${quote target.path}
       fi
       nix-store --realise "$path" --add-root ${quote target.path} --indirect >/dev/null
