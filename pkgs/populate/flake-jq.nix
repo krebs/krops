@@ -1,6 +1,21 @@
-# jq programs populate uses for flake and flake-input sources, in a file of
-# their own, so tests can run them.
+# Programs populate uses for flake and flake-input sources, in a file of
+# their own, so tests can run them: jq programs, which run on the deploying
+# machine, and a Nix function for the target, which may lack jq.
 rec {
+  # Nix function returning the subdirectory containing the flake that nix
+  # flake metadata describes, like subdirOf does in jq.
+  metadataSubdir = /* nix */ ''
+    metadata: let
+      subdir = ref:
+        ref.dir or (let
+          match = builtins.match ".*[?&]dir=([^&]*).*" (ref.url or "");
+        in
+          if match == null then "" else builtins.head match);
+      subdirs = builtins.filter (dir: dir != "")
+        (map subdir [ (metadata.locked or {}) (metadata.original or {}) ]);
+    in
+      if subdirs == [] then "" else builtins.head subdirs
+  '';
   # jq definitions for subdirectories containing flakes, which flake
   # references and lock entries name either as attribute dir or as query
   # parameter dir of their URL, depending on the version of Nix.  fetchTree

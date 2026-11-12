@@ -359,3 +359,105 @@ cat > /fixtures/patches/bad.patch <<'PATCH'
 -nothing like this
 +anything
 PATCH
+
+# broken: a flake with an input that can't be fetched anymore.
+mkdir /fixtures/www/src/vanishing
+cat > /fixtures/www/src/vanishing/flake.nix <<'NIX'
+{ outputs = _: { who = "vanishing"; }; }
+NIX
+tarball vanishing
+mkdir /fixtures/broken
+cat > /fixtures/broken/flake.nix <<NIX
+{
+  inputs.vanishing.url = "$url/vanishing.tar.gz";
+  outputs = { vanishing, ... }: { msg = "broken:\${vanishing.who}"; };
+}
+NIX
+(cd /fixtures/broken && nix flake lock)
+
+# pinned, usepinned: a tarball flake whose own lock file pins an input that
+# can't be fetched anymore, and a flake that draws that input from its own
+# input instead, so nothing it evaluates needs the pin.
+mkdir /fixtures/www/src/pinned
+cat > /fixtures/www/src/pinned/flake.nix <<NIX
+{
+  inputs.inner.url = "$url/vanishing.tar.gz";
+  outputs = { inner, ... }: { greeting = "pinned+\${inner.who}"; };
+}
+NIX
+(cd /fixtures/www/src/pinned && nix flake lock)
+tarball pinned
+mkdir /fixtures/usepinned
+cat > /fixtures/usepinned/flake.nix <<NIX
+{
+  inputs.inner.url = "$url/inner.tar.gz";
+  inputs.dep.url = "$url/pinned.tar.gz";
+  inputs.dep.inputs.inner.follows = "inner";
+  outputs = { dep, ... }: { msg = "usepinned:\${dep.greeting}"; };
+}
+NIX
+(cd /fixtures/usepinned && nix flake lock)
+rm /fixtures/www/vanishing.tar.gz
+
+# stale, usestale: a tarball flake whose lock file lacks an input its
+# flake.nix has, and a flake with it as input, whose own lock file is
+# complete.
+mkdir /fixtures/www/src/stale
+cat > /fixtures/www/src/stale/flake.nix <<NIX
+{
+  inputs.inner.url = "$url/inner.tar.gz";
+  outputs = { inner, ... }: { greeting = "stale+\${inner.who}"; };
+}
+NIX
+(cd /fixtures/www/src/stale && nix flake lock)
+cat > /fixtures/www/src/stale/flake.nix <<NIX
+{
+  inputs.inner.url = "$url/inner.tar.gz";
+  inputs.extra.url = "$url/inner2.tar.gz";
+  outputs = { inner, extra, ... }: { greeting = "stale+\${inner.who}+\${extra.who}"; };
+}
+NIX
+tarball stale
+mkdir /fixtures/usestale
+cat > /fixtures/usestale/flake.nix <<NIX
+{
+  inputs.dep.url = "$url/stale.tar.gz";
+  outputs = { dep, ... }: { msg = "usestale:\${dep.greeting}"; };
+}
+NIX
+(cd /fixtures/usestale && nix flake lock)
+
+# offline: a flake with an input of its own, which the tests make
+# unreachable between deploys.
+mkdir /fixtures/www/src/gap
+cat > /fixtures/www/src/gap/flake.nix <<'NIX'
+{ outputs = _: { who = "gap"; }; }
+NIX
+tarball gap
+mkdir /fixtures/offline
+cat > /fixtures/offline/flake.nix <<NIX
+{
+  inputs.gap.url = "$url/gap.tar.gz";
+  outputs = { gap, ... }: { msg = "offline:\${gap.who}"; };
+}
+NIX
+(cd /fixtures/offline && nix flake lock)
+
+# c3: a flake with an input, to draw another flake's input from.
+mkdir /fixtures/c3
+cat > /fixtures/c3/flake.nix <<NIX
+{
+  inputs.z.url = "$url/inner.tar.gz";
+  outputs = { z, ... }: { who = "c3(\${z.who})"; };
+}
+NIX
+(cd /fixtures/c3 && nix flake lock)
+
+# filtered-parent, filtered-parent-link: like filtered, but the filter file
+# applies to a subdirectory, which is what gets synced.
+mkdir -p /fixtures/filtered-parent/sub
+printf -- '- garbage\n' > /fixtures/filtered-parent/.rsync-filter
+echo keep > /fixtures/filtered-parent/sub/keep
+echo garbage > /fixtures/filtered-parent/sub/garbage
+ln -s filtered-parent /fixtures/filtered-parent-link
+chown -h nobody /fixtures/filtered-parent-link

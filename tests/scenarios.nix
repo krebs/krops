@@ -1104,6 +1104,124 @@ assert !(krops.isLocalTarget (targets.remote "/"));
         check = checkFlake { attr = "msg"; expected = "rel:lib"; };
       };
     })
+    # The target can't fetch an input of the flake.  The deploying machine
+    # fetched it when locking, so its fetcher cache has to go.
+    (s "fetch-failure" {
+      prepareDeployer = ''
+        rm -fR /root/.cache/nix
+      '';
+      phases = [{
+        sources.x.flake = { url = "/fixtures/broken"; fetchOnTarget = true; };
+        expect.fail = "vanishing.tar.gz";
+      }];
+    })
+    # The delivered input itself is locked to a path the target lacks.
+    (s "gone-input" {
+      phases = [{
+        sources.x.flake-input = { url = "/fixtures/usegone"; name = "gone"; fetchOnTarget = true; };
+        expect.fail = "input gone refers to /fixtures/gone, which does not exist on the target";
+      }];
+    })
+    # An input that gets drawn from a source isn't needed on the target, with
+    # all it pins.
+    (modes "overridden-roots" ({ draw, mode, ... }: {
+      phases = twice {
+        sources = alt // {
+          x.flake-input = {
+            url = "/fixtures/top"; name = "dep"; inherit fetchOnTarget;
+          } // draw { inner.follows = "alt"; };
+        };
+        check = checkFlake {
+          attr = "greeting"; expected = "dep+alt";
+          generated = mode == "generated";
+        } + roots 0;
+      };
+    }))
+    # The input's own lock file pins something unreachable, which gets drawn
+    # from a source anyway.
+    (modes "own-lock-unreachable" ({ draw, mode, ... }: {
+      prepareDeployer = ''
+        rm -fR /root/.cache/nix
+      '';
+      phases = twice {
+        sources = alt // {
+          x.flake-input = {
+            url = "/fixtures/usepinned"; name = "dep"; inherit fetchOnTarget;
+          } // draw { inner.follows = "alt"; };
+        };
+        check = checkFlake {
+          attr = "greeting"; expected = "pinned+alt";
+          generated = mode == "generated";
+        };
+      };
+    }))
+    # The input's own lock file pins something unreachable, or lacks an input
+    # its flake.nix has.  That fails, unless the input isn't required to come
+    # with its inputs.
+    (s "own-lock-broken" (let
+      x = url: requireInputs: {
+        x.flake-input = { inherit url; name = "dep"; inherit fetchOnTarget requireInputs; };
+      };
+      delivered = ''
+        test -e "$T"/x/flake.nix || fail "input not delivered"
+      '';
+    in {
+      prepareDeployer = ''
+        rm -fR /root/.cache/nix
+      '';
+      phases = [
+        {
+          sources = x "/fixtures/usepinned" true;
+          expect.fail = "error: source x: the inputs its own lock file pins can't be delivered.  Set its requireInputs to false to deliver it anyway.";
+        }
+        {
+          sources = x "/fixtures/usepinned" false;
+          check = delivered + roots 0;
+        }
+        {
+          sources = x "/fixtures/usestale" true;
+          expect.fail = "error: source x: the inputs its own lock file pins can't be delivered.  Set its requireInputs to false to deliver it anyway.";
+        }
+        {
+          sources = x "/fixtures/usestale" false;
+          check = delivered + roots 2;
+        }
+        {
+          sources = x "/fixtures/usestale" false;
+          check = delivered + roots 2;
+        }
+      ];
+    }))
+    # Redeploying an unchanged input while where it comes from is
+    # unreachable and the fetcher caches are gone: the store has it.
+    (s "offline-redeploy" (let
+      sources.x.flake-input = { url = "/fixtures/offline"; name = "gap"; inherit fetchOnTarget; };
+      check = checkFlake { attr = "who"; expected = "gap"; };
+    in {
+      prepareDeployer = ''
+        if test -e /fixtures/www/gap.tar.gz.off; then
+          mv /fixtures/www/gap.tar.gz.off /fixtures/www/gap.tar.gz
+        fi
+      '';
+      phases = [
+        {
+          inherit sources check;
+          mutate = ''
+            rm -fR /root/.cache/nix
+          '';
+          mutateDeployer = ''
+            rm -fR /root/.cache/nix
+            mv /fixtures/www/gap.tar.gz /fixtures/www/gap.tar.gz.off
+          '';
+        }
+        {
+          inherit sources check;
+          mutateDeployer = ''
+            mv /fixtures/www/gap.tar.gz.off /fixtures/www/gap.tar.gz
+          '';
+        }
+      ];
+    }))
     (s "flake-to-file" {
       phases = [
         {

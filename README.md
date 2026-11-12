@@ -476,6 +476,15 @@ Supported attributes:
   e.g. `stockholm/nixpkgs`, and resolved as the flake's lock file resolves
   them, so an input that follows another one names the other one.
 
+* `requireInputs` (optional) -
+  boolean that controls whether populating fails if the inputs that the
+  input's own lock file pins can't be delivered, e.g. because the lock file
+  pins something unreachable, or lacks an input its `flake.nix` has.  With
+  `false`, populate prints a warning and delivers the input with the inputs
+  Nix locks when it adds what the lock file lacks, or else without its
+  inputs.  Evaluating the input as a flake then needs network access.
+  Defaults to `true`.
+
 * `fetchOnTarget` (optional) -
   boolean that controls whether the target fetches the input itself instead
   of receiving it from the deploying machine.  The target then uses the
@@ -669,8 +678,10 @@ there are any), all other sources as `path:`, with symlinks resolved.  Lock
 files get rewritten or generated on every run, so they match the sources.
 Copies of `flake` and `flake-input` sources get made again only if the
 delivered store path, the patches, or the sources they draw inputs from
-change.  Generated flakes and copies get removed once their sources no longer
-need them.  This requires Nix with flake support (Nix 2.4 or later) on the
+change.  Inputs that get drawn from other sources don't get delivered with
+a `flake` or `flake-input` source, and neither does what they pin.
+Generated flakes and copies get removed once their sources no longer need
+them.  This requires Nix with flake support (Nix 2.4 or later) on the
 target.  Populating fails if a source that draws inputs from other sources
 contains no `flake.nix`.  Sources that inputs get drawn from don't need to be
 flakes, as long as the inputs drawing from them are declared with

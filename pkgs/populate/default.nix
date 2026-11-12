@@ -550,7 +550,8 @@ let
   pop.flake = target: source: pop.flake-input target (source // { name = null; });
 
   pop.flake-input = target: source: let
-    inherit (import ./flake-jq.nix) selected selfIsRemote selfLocked;
+    inherit (import ./flake-jq.nix)
+      metadataSubdir selected selfIsRemote selfLocked;
     nix' = "${nix}/bin/nix --extra-experimental-features ${quote "nix-command flakes"}";
     inputPath = if source.name == null then [] else splitString "/" source.name;
     fetchOnTarget = source.fetchOnTarget or false;
@@ -608,31 +609,81 @@ let
           ${quote source.url} ${quote (toString source.name)}
       exit 1
     '';
+    # The inputs of the flake in this source that get drawn from other
+    # sources, as paths of input names.
+    overridden = map (x: x.path) (flakeFollows { type = "flake"; flake = source; });
+    requireInputs = source.requireInputs or true;
     # Shell function printing the store path $1, followed by the inputs its
-    # flake in the subdirectory $2 pins in its own lock file, using the nix
-    # command nix.  Without a lock file, locking would change the flake, so
-    # there are no such inputs.
-    closure = nix: /* sh */ ''
+    # flake in the subdirectory $2 pins in its own lock file, using the
+    # commands nix and mktemp.  Without a lock file, locking would change the
+    # flake, so there are no such inputs.  Inputs that get drawn from other
+    # sources are left out, with all they pin: Nix archives an empty flake
+    # in their place, so it doesn't fetch them.
+    closure = { nix, mktemp }: /* sh */ ''
+      # Prints the store paths in nix flake archive's output $1.
+      closure_paths() {
+        ARCHIVE=$1 OVERRIDDEN=${quote (toJSON overridden)} \
+        ${nix} eval --impure --raw --expr '
+          let
+            overridden = builtins.fromJSON (builtins.getEnv "OVERRIDDEN");
+            # Inputs given by relative paths are part of their parent.
+            paths = prefix: node: builtins.concatMap
+              (name: let
+                input = node.inputs.''${name};
+                path = prefix ++ [ name ];
+              in
+                if builtins.elem path overridden then []
+                else
+                  (if input ? path then [ input.path ] else []) ++
+                  paths path input)
+              (builtins.attrNames (node.inputs or {}));
+          in
+            builtins.concatStringsSep "\n"
+              (paths [] (builtins.fromJSON (builtins.getEnv "ARCHIVE")))
+        '
+        echo
+      }
       closure() {
         printf '%s\n' "$1"
         closure_dir=$1''${2:+/$2}
         if test -e "$closure_dir"/flake.nix && test -e "$closure_dir"/flake.lock; then
-          ARCHIVE=$(
-            ${nix} flake archive --json --no-update-lock-file \
-                "path:$1''${2:+?dir=$2}"
-          ) \
-          ${nix} eval --impure --raw --expr '
-            let
-              # Inputs given by relative paths are part of their parent.
-              paths = node: builtins.concatMap
-                (input:
-                  (if input ? path then [ input.path ] else []) ++ paths input)
-                (builtins.attrValues (node.inputs or {}));
-            in
-              builtins.concatStringsSep "\n"
-                (paths (builtins.fromJSON (builtins.getEnv "ARCHIVE")))
-          '
-          echo
+          closure_flake=path:$1''${2:+?dir=$2}
+          set --
+          ${optionalString (overridden != []) /* sh */ ''
+            closure_empty=$(${mktemp} -d)
+            echo '{ outputs = _: {}; }' > "$closure_empty"/flake.nix
+            ${concatMapStrings (path: /* sh */ ''
+              set -- "$@" --override-input ${quote (concatStringsSep "/" path)} "path:$closure_empty"
+            '') overridden}
+          ''}
+          if closure_archive=$(
+            ${nix} flake archive --json --no-update-lock-file "$@" "$closure_flake"
+          ); then
+            closure_paths "$closure_archive"
+          else
+            ${if requireInputs then /* sh */ ''
+              >&2 printf 'error: source %s: the inputs its own lock file pins can'"'"'t be delivered%s\n' \
+                  ${quote name} ${quote (optionalString (source.name != null)
+                    ".  Set its requireInputs to false to deliver it anyway.")}
+              exit 1
+            '' else /* sh */ ''
+              # Without --no-update-lock-file, Nix adds what the lock file
+              # lacks.
+              if closure_archive=$(
+                ${nix} flake archive --json --no-write-lock-file "$@" "$closure_flake"
+              ); then
+                >&2 printf 'warning: source %s: its own lock file needs to be updated; delivering it with the inputs Nix locks now, which evaluating it may not use\n' \
+                    ${quote name}
+                closure_paths "$closure_archive"
+              else
+                >&2 printf 'warning: source %s: the inputs its own lock file pins can'"'"'t be delivered; delivering it without them\n' \
+                    ${quote name}
+              fi
+            ''}
+          fi
+          ${optionalString (overridden != []) /* sh */ ''
+            rm -R "$closure_empty"
+          ''}
         fi
       }
     '';
@@ -709,6 +760,7 @@ let
       ${requireFlakes "fetching flake inputs on the target"}
       read -r selected
       read -r self
+      read -r expected
       if test -n "$self" && ! nix-store --check-validity "$self" 2>/dev/null; then
         name=$(basename "$self" | cut -c34-)
         mv ${quote upload}/tree ${quote upload}/"$name"
@@ -720,16 +772,27 @@ let
           exit 1
         fi
       fi
+      # Fetching contacts where the input comes from even if the store has
+      # what the lock file pins.
+      if test -n "$expected" && ! nix-store --check-validity "$expected" 2>/dev/null; then
+        expected=
+      fi
       # The store path and the subdirectory, on separate lines.  Inputs
       # referring to local paths can only be fetched if the target has them
       # as well.
       fetched=$(
-        FLAKE=${quote source.url} SELECTED=$selected SELF=$self \
+        FLAKE=${quote source.url} INPUT=${quote (toString source.name)} \
+        SELECTED=$selected SELF=$self EXPECTED=$expected \
         nix eval --impure --raw --expr '
           let
             selected = builtins.fromJSON (builtins.getEnv "SELECTED");
+            expected = builtins.getEnv "EXPECTED";
+            selectedPath =
+              if selected.self || expected != "" then null
+              else localPath selected.locked;
             path =
               if selected.self then builtins.getEnv "SELF"
+              else if expected != "" then expected
               else (builtins.fetchTree selected.locked).outPath;
             dir = path + (if selected.subdir == "" then "" else "/" + selected.subdir);
             lock =
@@ -750,7 +813,9 @@ let
               (builtins.attrNames lock.nodes);
             key = builtins.head missing;
           in
-            if missing != [] then
+            if selectedPath != null && builtins.substring 0 1 selectedPath == "/" && !builtins.pathExists selectedPath then
+              throw "flake ''${builtins.getEnv "FLAKE"}: input ''${builtins.getEnv "INPUT"} refers to ''${selectedPath}, which does not exist on the target"
+            else if missing != [] then
               throw "flake ''${builtins.getEnv "FLAKE"}: input ''${key} refers to ''${localPath lock.nodes.''${key}.locked}, which does not exist on the target"
             else
               path + "\n" + selected.subdir
@@ -758,8 +823,10 @@ let
       )
       path=$(printf '%s\n' "$fetched" | sed -n 1p)
       subdir=$(printf '%s\n' "$fetched" | sed -n 2p)
-      ${closure "nix"}
-      { printf '%s\n' "$subdir"; closure "$path" "$subdir"; } | {
+      ${closure { nix = "nix"; mktemp = "mktemp"; }}
+      # Not in the pipeline, where failing wouldn't fail populate.
+      paths=$(closure "$path" "$subdir")
+      printf '%s\n%s\n' "$subdir" "$paths" | {
         ${link}
       }
     '';
@@ -768,33 +835,20 @@ let
       set -efu
       ${requireFlakes "fetching flakes on the target"}
       metadata=$(nix flake metadata --json --no-update-lock-file ${quote source.url})
-      archive=$(nix flake archive --json --no-update-lock-file ${quote source.url})
-      lines=$(
-        METADATA=$metadata ARCHIVE=$archive \
-        nix eval --impure --raw --expr '
+      # The store path and the subdirectory, on separate lines.
+      fetched=$(
+        METADATA=$metadata nix eval --impure --raw --expr '
           let
-            # Inputs given by relative paths are part of their parent.
-            paths = node:
-              (if node ? path then [ node.path ] else []) ++
-              builtins.concatMap paths (builtins.attrValues (node.inputs or {}));
             metadata = builtins.fromJSON (builtins.getEnv "METADATA");
-            archive = builtins.fromJSON (builtins.getEnv "ARCHIVE");
-            # The subdirectory, as attribute dir or as query parameter dir
-            # of the URL, depending on the version of Nix.
-            subdir = ref:
-              ref.dir or (let
-                match = builtins.match ".*[?&]dir=([^&]*).*" (ref.url or "");
-              in
-                if match == null then "" else builtins.head match);
-            subdirs = builtins.filter (dir: dir != "")
-              (map subdir [ (metadata.locked or {}) (metadata.original or {}) ]);
           in
-            builtins.concatStringsSep "\n"
-              ([ (if subdirs == [] then "" else builtins.head subdirs) ] ++
-               paths archive)
+            metadata.path + "\n" + (${metadataSubdir}) metadata
         '
       )
-      printf '%s\n' "$lines" | {
+      path=$(printf '%s\n' "$fetched" | sed -n 1p)
+      subdir=$(printf '%s\n' "$fetched" | sed -n 2p)
+      ${closure { nix = "nix"; mktemp = "mktemp"; }}
+      paths=$(closure "$path" "$subdir")
+      printf '%s\n%s\n' "$subdir" "$paths" | {
         ${link}
       }
     '';
@@ -855,22 +909,46 @@ let
         ''}
       fi
 
+      # The store path the lock file pins what's selected to, which is the
+      # one of a directory named source with the locked hash.  A store that
+      # has it needs no fetching, which contacts where the input comes from
+      # even then.
+      expected=
+      hash=$(printf '%s\n' "$selected" | ${jq}/bin/jq -r '.locked.narHash // empty')
+      case $hash in
+        sha256-*)
+          expected=$(
+            ${nix}/bin/nix-store --print-fixed-path --recursive sha256 "$(
+              printf %s "''${hash#sha256-}" |
+              ${coreutils}/bin/base64 -d |
+              ${coreutils}/bin/od -An -v -tx1 |
+              ${coreutils}/bin/tr -d ' \n'
+            )" source
+          )
+          ;;
+      esac
+
       ${if fetchOnTarget then /* sh */ ''
-        printf '%s\n%s\n' "$selected" "$self" | {
+        printf '%s\n%s\n%s\n' "$selected" "$self" "$expected" | {
           ${runShell target fetchAndLink}
         }
       '' else /* sh */ ''
         path=$self
         if test -z "$path"; then
-          path=$(
-            SELECTED=$selected ${nix'} eval --impure --raw --expr '
-              (builtins.fetchTree
-                (builtins.fromJSON (builtins.getEnv "SELECTED")).locked).outPath
-            '
-          )
+          if test -n "$expected" &&
+              ${nix}/bin/nix-store --check-validity "$expected" 2>/dev/null; then
+            path=$expected
+          else
+            path=$(
+              SELECTED=$selected ${nix'} eval --impure --raw --expr '
+                (builtins.fetchTree
+                  (builtins.fromJSON (builtins.getEnv "SELECTED")).locked).outPath
+              '
+            )
+          fi
         fi
         subdir=$(printf '%s\n' "$selected" | ${jq}/bin/jq -r .subdir)
-        ${closure nix'}
+        ${closure { nix = nix'; mktemp = "${coreutils}/bin/mktemp"; }}
         paths=$(closure "$path" "$subdir")
 
         ${optionalString (!isLocalTarget target) /* sh */ ''
