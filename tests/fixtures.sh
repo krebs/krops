@@ -244,6 +244,14 @@ cat > /fixtures/usedata/flake.nix <<'NIX'
 NIX
 printf hello > /fixtures/data/value
 
+# pipe2: a command for the pipe source type whose output the tests change.
+cat > /fixtures/pipe2 <<'SH'
+#! /bin/sh
+cat /fixtures/pipe2-data
+SH
+chmod +x /fixtures/pipe2
+echo piped > /fixtures/pipe2-data
+
 # noflake: a directory without flake.nix.
 mkdir /fixtures/noflake
 echo noflake > /fixtures/noflake/README

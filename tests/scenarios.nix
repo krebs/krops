@@ -919,6 +919,32 @@ assert !(krops.isLocalTarget (targets.remote "/"));
         '';
       };
     })
+    # Output of the same length, which rsync's quick check doesn't notice.
+    (s "pipe-change" {
+      prepareDeployer = ''
+        echo piped > /fixtures/pipe2-data
+      '';
+      phases = [
+        {
+          sources.x.pipe = "/fixtures/pipe2";
+          check = ''
+            expect_eq x "$(cat "$T"/x)" piped
+          '';
+          mutateDeployer = ''
+            echo PIPED > /fixtures/pipe2-data
+          '';
+        }
+        {
+          sources.x.pipe = "/fixtures/pipe2";
+          check = ''
+            expect_eq x "$(cat "$T"/x)" PIPED
+          '';
+          mutateDeployer = ''
+            echo piped > /fixtures/pipe2-data
+          '';
+        }
+      ];
+    })
   ] ++ lib.optional (targetKind == "local")
     # The target has the path the input is locked to.
     (s "uselocal" {

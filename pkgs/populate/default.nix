@@ -773,7 +773,9 @@ let
     ${quote source.command} > "$out"
     ${coreutils}/bin/touch -t 300001010000 "$out"
 
-    ${rsync' target rsyncDefaultConfig /* sh */ "$out"}
+    # With the fixed modification time, only checksums tell outputs of the
+    # same size apart.
+    ${rsync' target (rsyncDefaultConfig // { useChecksum = true; }) /* sh */ "$out"}
   '';
 
   # TODO rm -fR instead of ln -f?
