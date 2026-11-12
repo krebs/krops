@@ -89,6 +89,9 @@ let
         rest = if parent == null then x.path else drop (length parent) x.path;
       in
         "inputs.${toJSON base}" +
+        # A source with a generated flake has itself as input therein.
+        optionalString (parent != null && generated ? ${base})
+          ".inputs.${toJSON base}" +
         concatMapStrings (name: ".inputs.${toJSON name}") rest +
         ".follows = ${toJSON x.source};";
     in /* sh */ ''

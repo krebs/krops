@@ -867,6 +867,22 @@ assert !(krops.isLocalTarget (targets.remote "/"));
         }
       ];
     }))
+    (s "override-generated" {
+      phases = twice {
+        sources = {
+          x.flake = {
+            flake = "/fixtures/top"; inherit fetchOnTarget;
+            inputs.dep = { follows = "b"; inputs.q.follows = "c2"; };
+          };
+          b.file = { path = "/fixtures/two"; inputs.p.follows = "c1"; };
+          c1.file = "/fixtures/c1";
+          c2.file = "/fixtures/c2";
+        };
+        check = ''
+          expect_eq msg "$(nix_eval_online "$T"/.populate/flakes/x#msg)" top:two:c1+c2,sub
+        '';
+      };
+    })
   ] ++ lib.optional (targetKind == "local")
     # The target has the path the input is locked to.
     (s "uselocal" {

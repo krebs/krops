@@ -216,6 +216,23 @@ cat > /fixtures/rel/flake.nix <<'NIX'
 NIX
 (cd /fixtures/rel && nix flake lock && git init -q && commit rel)
 
+# two, c1, c2: a flake with two inputs, and two flakes to draw them from.
+mkdir /fixtures/two /fixtures/c1 /fixtures/c2
+cat > /fixtures/two/flake.nix <<NIX
+{
+  inputs.p.url = "$url/inner.tar.gz";
+  inputs.q.url = "$url/inner.tar.gz";
+  outputs = { p, q, ... }: { greeting = "two:\${p.who}+\${q.who}"; };
+}
+NIX
+(cd /fixtures/two && nix flake lock)
+cat > /fixtures/c1/flake.nix <<'NIX'
+{ outputs = _: { who = "c1"; }; }
+NIX
+cat > /fixtures/c2/flake.nix <<'NIX'
+{ outputs = _: { who = "c2"; }; }
+NIX
+
 # noflake: a directory without flake.nix.
 mkdir /fixtures/noflake
 echo noflake > /fixtures/noflake/README
