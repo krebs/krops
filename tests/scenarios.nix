@@ -883,6 +883,17 @@ assert !(krops.isLocalTarget (targets.remote "/"));
         '';
       };
     })
+    (s "nonflake-input" {
+      phases = twice {
+        sources = {
+          x.file = { path = "/fixtures/usedata"; inputs.data.follows = "data"; };
+          data.file = "/fixtures/data";
+        };
+        check = ''
+          expect_eq msg "$(nix_eval "$T"/.populate/flakes/x#msg)" data:hello
+        '';
+      };
+    })
   ] ++ lib.optional (targetKind == "local")
     # The target has the path the input is locked to.
     (s "uselocal" {

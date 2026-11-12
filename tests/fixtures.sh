@@ -233,6 +233,17 @@ cat > /fixtures/c2/flake.nix <<'NIX'
 { outputs = _: { who = "c2"; }; }
 NIX
 
+# usedata, data: a flake with an input that isn't a flake, and a directory
+# to draw it from.
+mkdir /fixtures/usedata /fixtures/data
+cat > /fixtures/usedata/flake.nix <<'NIX'
+{
+  inputs.data = { url = "path:/nonexistent"; flake = false; };
+  outputs = { data, ... }: { msg = "data:${builtins.readFile (data + "/value")}"; };
+}
+NIX
+printf hello > /fixtures/data/value
+
 # noflake: a directory without flake.nix.
 mkdir /fixtures/noflake
 echo noflake > /fixtures/noflake/README

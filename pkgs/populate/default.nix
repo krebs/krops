@@ -108,6 +108,11 @@ let
           printf '  inputs.%s.url = "%s";\n' ${quote (toJSON name)} "$url"
           ${concatImapStrings (i: source: /* sh */ ''
             printf '  inputs.%s.url = "%s";\n' ${quote (toJSON source)} "$url${toString i}"
+            ${optionalString (!generated ? ${source}) /* sh */ ''
+              if ! test -e "$(readlink -f ${quote "${target.path}/${source}"})"/flake.nix; then
+                printf '  inputs.%s.flake = false;\n' ${quote (toJSON source)}
+              fi
+            ''}
           '') drawn}
           ${concatMapStrings (x: /* sh */ ''
             printf '  %s\n' ${quote (override x)}
