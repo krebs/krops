@@ -23,8 +23,9 @@
   remoteHost,
   # Absolute path of age on the deploying machine.
   agePath,
-  # HEAD of /fixtures/gitsrc.
+  # HEAD of /fixtures/gitsrc, and its parent.
   gitHead,
+  gitFirst,
 }:
 
 let
@@ -363,10 +364,10 @@ assert !(krops.isLocalTarget (targets.remote "/"));
       gc
       expect_eq msg "$(nix_eval "$T"/.populate/flakes/x#msg)" git:alt
     '';
-    sources = {
+    sources = ref: {
       x.git = {
         url = gitUrl;
-        ref = gitHead;
+        inherit ref;
         inherit (flags) shallow fetchAlways;
         clean.exclude = optional flags.cleanExclude "keepme";
         inputs = optionalAttrs flags.inputs { dep.follows = "alt"; };
@@ -374,15 +375,26 @@ assert !(krops.isLocalTarget (targets.remote "/"));
     } // optionalAttrs flags.inputs alt;
   in {
     phases = [
+      # The older commit first, so deploying HEAD changes the work tree, and
+      # fetches if fetchAlways is set or the clone is shallow.
       {
-        inherit sources check;
+        sources = sources gitFirst;
+        check = ''
+          expect_eq HEAD "$(git -C "$T"/x rev-parse HEAD)" ${gitFirst}
+          expect_eq commits "$(git -C "$T"/x rev-list --count HEAD)" 1
+          test ! -e "$T"/x/two || fail "two present"
+        '';
+      }
+      {
+        sources = sources gitHead;
+        inherit check;
         mutate = ''
           echo junk > "$T"/x/junk
           echo keepme > "$T"/x/keepme
         '';
       }
       {
-        inherit sources;
+        sources = sources gitHead;
         check = check + ''
           test ! -e "$T"/x/junk || fail "junk not cleaned"
           ${if flags.cleanExclude then ''

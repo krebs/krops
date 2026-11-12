@@ -5,9 +5,10 @@
 { pkgs ? import ../pkgs {} }:
 
 let
-  # HEAD of /fixtures/gitsrc, which fixtures.sh creates deterministically.
-  # fixtures.sh fails if it differs, naming the actual one.
+  # HEAD of /fixtures/gitsrc, which fixtures.sh creates deterministically,
+  # and its parent.  fixtures.sh fails if HEAD differs, naming the actual one.
   gitHead = "e42d44ef9cdb76ba5a84dff4c89c38222703bf0c";
+  gitFirst = "8d47013fa0888948cf0ffcc4e3c69a7b5f180562";
 
   scenarios = import ./scenarios.nix {
     inherit (pkgs) lib;
@@ -18,7 +19,7 @@ let
     gitUrl = "git://deployer/gitsrc.git";
     remoteHost = "target";
     agePath = "${pkgs.age}/bin/age";
-    inherit gitHead;
+    inherit gitHead gitFirst;
   };
 in
   builtins.mapAttrs
