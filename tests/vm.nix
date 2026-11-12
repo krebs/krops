@@ -151,11 +151,15 @@ in pkgs.testers.runNixOSTest {
                 run(node, f"sh {scenario['prepare']}")
                 for i, phase in enumerate(scenario["phases"]):
                     # A hang fails the scenario, not the whole test.
+                    limit = phase["interrupt"] or 600
                     status, out = deployer.execute(
-                        f"env HOME=/root {phase['env']} timeout 600 {phase['populate']} 2>&1",
+                        f"env HOME=/root {phase['env']} timeout {limit} {phase['populate']} 2>&1",
                         timeout=900,
                     )
-                    if phase["expect"] is None:
+                    if phase["interrupt"] is not None:
+                        if status != 124:
+                            raise Exception(f"populate {i} ends on its own:\n{out}")
+                    elif phase["expect"] is None:
                         if status != 0:
                             raise Exception(f"populate {i} fails:\n{out}")
                     elif status == 0 or phase["expect"] not in out:

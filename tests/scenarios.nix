@@ -97,10 +97,11 @@ let
     # targetPath deploys to another path than the scenario's target
     # directory, and controlTargetPath is the control for a path that makes
     # evaluation fail.  env sets environment variables for populate, as
-    # arguments of env.
+    # arguments of env.  interrupt ends populate after that many seconds,
+    # which it's expected not to finish before.
     phase = {
       sources, backup ? false, prune ? false, deploy ? null,
-      targetPath ? path, env ? "",
+      targetPath ? path, env ? "", interrupt ? null,
       expect ? "success", control ? null, controlTargetPath ? null,
       check ? "", mutate ? null, checkDeployer ? null, mutateDeployer ? null,
     }: let
@@ -135,7 +136,7 @@ let
           null
       else {
         populate = toString (command sources targetPath);
-        inherit env;
+        inherit env interrupt;
         expect = if expect == "success" then null else expect.fail;
         # No phase gets around checking the canaries.
         check = script (check + "\ncanary_check\n");
@@ -1320,6 +1321,29 @@ assert !(krops.isLocalTarget (targets.remote "/"));
         }
       ];
     }))
+    # A signal ending populate leaves neither the ssh master nor the
+    # temporary directory.
+    (s "interrupt" {
+      prepareDeployer = ''
+        find "''${TMPDIR:-/tmp}" -maxdepth 1 -name 'populate.*' -exec rm -fR {} +
+      '';
+      phases = [{
+        sources.x.pipe = "/fixtures/pipe-slow";
+        interrupt = 3;
+        checkDeployer = ''
+          for i in 1 2 3 4 5 6 7 8 9 10; do
+            if ! pgrep -f 'ssh: .*/populate\..*\[mux\]' >/dev/null; then
+              break
+            fi
+            sleep 0.5
+          done
+          ! pgrep -f 'ssh: .*/populate\..*\[mux\]' >/dev/null ||
+            fail "ssh master remains"
+          expect_eq "temporary directories" \
+              "$(find "''${TMPDIR:-/tmp}" -maxdepth 1 -name 'populate.*')" ""
+        '';
+      }];
+    })
     # An input of an input drawn from a source that draws inputs itself
     # gets drawn from another source.
     (modes "override" ({ draw, flake, ... }: {

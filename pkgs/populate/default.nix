@@ -1338,7 +1338,15 @@ writers.writeDash "populate.${target.host}" ''
       ${ssh' target} -q -O stop ${quote target.host}
     fi
   }
-  trap 'stop_ssh_master; rm -R "$TMPDIR"' EXIT
+  trap 'trap "" HUP INT TERM; stop_ssh_master; rm -R "$TMPDIR"' EXIT
+  # A signal ends the shell without running the trap above, unless it's
+  # trapped itself.  The shell runs these traps once the command it waits
+  # for ends, which a signal to the process group, like the one of an
+  # interrupt key, ends as well.  Further signals get ignored, so they
+  # don't end the trap above halfway.
+  trap 'trap "" HUP INT TERM; exit 129' HUP
+  trap 'trap "" HUP INT TERM; exit 130' INT
+  trap 'trap "" HUP INT TERM; exit 143' TERM
 
   ${check { inherit force target; }}
   set -x

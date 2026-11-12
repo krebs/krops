@@ -337,6 +337,14 @@ echo piped
 SH
 chmod +x /fixtures/pipe
 
+# pipe-slow: a command that takes longer than the tests wait for it.
+cat > /fixtures/pipe-slow <<'SH'
+#! /bin/sh
+sleep 60
+echo piped
+SH
+chmod +x /fixtures/pipe-slow
+
 # patches: hello and hello2 change dep's greeting, hello2 only after hello;
 # sub changes the flake in mono's subdirectory; bad applies to nothing.
 mkdir -p /fixtures/patches
