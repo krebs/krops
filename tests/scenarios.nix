@@ -1385,6 +1385,45 @@ assert !(krops.isLocalTarget (targets.remote "/"));
         '';
       };
     }))
+    # The same one level deeper: the input gets drawn from a source below
+    # an input that the source in between draws from a source itself.
+    (modes "override-deep" ({ draw, flake, ... }: {
+      phases = twice {
+        sources = {
+          x.flake = {
+            url = "/fixtures/top"; inherit fetchOnTarget;
+          } // draw { dep = { follows = "b"; inputs.p.inputs.z.follows = "c2"; }; };
+          b.file = { path = "/fixtures/two"; } // draw { p.follows = "c3"; };
+          c2.file = "/fixtures/c2";
+          c3.file = "/fixtures/c3";
+        };
+        check = ''
+          expect_eq msg "$(nix_eval_online ${flake "x"}#msg)" 'top:two:c3(c2)+inner,sub'
+        '';
+      };
+    }))
+    # A source with a rewritten lock file draws an input from a source with
+    # a generated flake, and an input below it from another source.
+    (s "override-mixed" {
+      phases = twice {
+        sources = {
+          x.flake = {
+            url = "/fixtures/top"; inherit fetchOnTarget;
+            inputs.dep = { follows = "b"; inputs.q.follows = "c2"; };
+          };
+          b.file = {
+            path = "/fixtures/two";
+            rewriteLock = false;
+            inputs.p.follows = "c1";
+          };
+          c1.file = "/fixtures/c1";
+          c2.file = "/fixtures/c2";
+        };
+        check = ''
+          expect_eq msg "$(nix_eval_online "$T"/x#msg)" top:two:c1+c2,sub
+        '';
+      };
+    })
     (modes "nonflake-input" ({ draw, flake, ... }: {
       phases = twice {
         sources = {

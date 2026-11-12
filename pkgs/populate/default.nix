@@ -236,12 +236,34 @@ let
         throw "krops: source ${name} draws inputs from missing source ${source}"
       else
         source;
+    # Where the input at path, a list of input names, of the flake in the
+    # source named name is in the flake that the source's inputs get drawn
+    # into: the flake itself, or its generated flake.  On the way, inputs
+    # that get drawn from sources are the flakes of those sources, where
+    # drawing went on, so the path continues there.  A generated flake has
+    # its source and the sources that one draws from as inputs, and nothing
+    # else, so the path names them there.
+    drawnPath = name: path: let
+      follows = flakeFollows sources.${name};
+      parents = filter
+        (prefix: any (x: x.path == prefix) follows)
+        (map (n: take n path) (range 1 (length path - 1)));
+      parent = last parents;
+      from = (findFirst (x: x.path == parent) null follows).source;
+      rest = drawnPath from (drop (length parent) path);
+    in
+      if generated ? ${name} then
+        if parents == [] then [ (inputName name) ] ++ path
+        else [ (inputName from) ] ++ rest
+      else
+        if parents == [] then path
+        else parent ++ rest;
     # Sets the positional parameters to nix flake lock's arguments for
     # drawing the inputs of the flake in source name from other sources.
     overrideArgs = name: /* sh */ ''
       set --
       ${concatMapStrings (x: /* sh */ ''
-        set -- "$@" --override-input ${quote (concatStringsSep "/" x.path)} ${url (check name x.source)}
+        set -- "$@" --override-input ${quote (concatStringsSep "/" (drawnPath name x.path))} ${url (check name x.source)}
       '') (flakeFollows sources.${name})}
     '';
     # Rewrites the lock file of the flake in a file or git source in place.
@@ -381,21 +403,9 @@ let
       # Nix ignores overrides below an input that follows another input, so
       # an input of an input drawn from a source gets overridden at that
       # source.
-      override = x: let
-        drawnParents = filter
-          (path: any (y: y.path == path) follows)
-          (map (n: take n x.path) (range 1 (length x.path - 1)));
-        parent = if drawnParents == [] then null else last drawnParents;
-        base =
-          if parent == null then name
-          else (findFirst (y: y.path == parent) null follows).source;
-        rest = if parent == null then x.path else drop (length parent) x.path;
-      in
-        "inputs.${toJSON (inputName base)}" +
-        # A source with a generated flake has itself as input therein.
-        optionalString (parent != null && generated ? ${base})
-          ".inputs.${toJSON (inputName base)}" +
-        concatMapStrings (name: ".inputs.${toJSON name}") rest +
+      override = x:
+        "inputs." +
+        concatMapStringsSep ".inputs." toJSON (drawnPath name x.path) +
         ".follows = ${toJSON (inputName x.source)};";
     in /* sh */ ''
       (
