@@ -576,11 +576,13 @@ flakes, as long as the inputs drawing from them are declared with
 
 ## Tests
 
-`tests/` contains NixOS VM tests for populate: one test per source type, and
-one for features spanning sources, such as flake inputs from sources.  Each
-test deploys every combination of a source type's options to the deploying
-machine itself, to a remote target as `root`, and to a remote target using
-`sudo`, and checks the result after deploying and after deploying again.
+`tests/` contains NixOS VM tests for populate: one test per source type, one
+for features spanning sources, such as flake inputs from sources, one for edge
+cases of flakes, such as unusual lock files, and one for the arguments
+`writeDeploy` passes to `nixos-rebuild`.  The tests deploy every combination
+of a source type's options to the deploying machine itself, to a remote target
+as `root`, and to a remote target using `sudo`, and check the result after
+deploying and after deploying again.
 The tests require KVM and nixpkgs with `pkgs.testers.runNixOSTest`
 (23.05 or later), and use `<nixpkgs>` by default.
 

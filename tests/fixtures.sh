@@ -108,6 +108,45 @@ NIX
 (cd /fixtures/usegone && nix flake lock)
 rm -R /fixtures/gone
 
+# kropsremote: a registry entry for remote, so it has an indirect reference.
+nix registry add kropsremote "$url/remote.tar.gz"
+
+# monoin: a Git work tree with a flake in subdirectory sub that has an input.
+mkdir -p /fixtures/monoin/sub
+echo monoin > /fixtures/monoin/README
+cat > /fixtures/monoin/sub/flake.nix <<NIX
+{
+  inputs.dep.url = "$url/dep.tar.gz";
+  outputs = { dep, ... }: { msg = "monoin:\${dep.greeting}"; };
+}
+NIX
+(cd /fixtures/monoin/sub && nix flake lock)
+(cd /fixtures/monoin && git init -q && commit monoin)
+
+# dirty: a copy of top with an uncommitted change and an untracked file.
+cp -R /fixtures/top /fixtures/dirty
+sed -i 's/top:/dirty:/' /fixtures/dirty/flake.nix
+echo untracked > /fixtures/dirty/untracked
+
+# unlocked: a flake whose lock file is missing.
+mkdir /fixtures/unlocked
+cat > /fixtures/unlocked/flake.nix <<NIX
+{
+  inputs.inner.url = "$url/inner.tar.gz";
+  outputs = { inner, ... }: { msg = inner.who; };
+}
+NIX
+
+# uselocal: a flake with an input locked to a path on the deploying machine.
+mkdir /fixtures/uselocal
+cat > /fixtures/uselocal/flake.nix <<'NIX'
+{
+  inputs.a.url = "path:/fixtures/alt";
+  outputs = { a, ... }: { msg = "uselocal:${a.who}"; };
+}
+NIX
+(cd /fixtures/uselocal && nix flake lock)
+
 # noflake: a directory without flake.nix.
 mkdir /fixtures/noflake
 echo noflake > /fixtures/noflake/README

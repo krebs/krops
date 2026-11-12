@@ -692,4 +692,96 @@ assert !(krops.isLocalTarget (targets.remote "/"));
     })
   ]) targetKinds;
 
+  # Edge cases of the flake source types and of generated flakes: unusual lock
+  # files, references, and changes between deploys.
+  edge-cases = concatMap (targetKind: let
+    s = name: args: scenario ({
+      name = "${name}-${targetKind}";
+      inherit targetKind;
+      isolate = true;
+    } // args);
+    copying = targetKind != "sudo";
+    fetchOnTarget = !copying;
+    roots = n: ''
+      expect_eq roots "$(ls "$T"/.populate/flake-inputs/x 2>/dev/null | wc -l)" ${toString n}
+    '';
+  in [
+    # The registry entry kropsremote, which fixtures.sh adds on the deploying
+    # machine, points at ${url}/remote.tar.gz.  The deploying machine has no
+    # global registry, which it couldn't download.
+    (s "indirect" {
+      phases = twice {
+        sources.x.flake = { flake = "kropsremote"; inherit fetchOnTarget; };
+        check = checkFlake { attr = "msg"; expected = "remote:dep+inner"; };
+      };
+    })
+    (s "remote-subdir" {
+      phases = twice {
+        sources.x.flake = { flake = "${url}/mono.tar.gz?dir=sub"; inherit fetchOnTarget; };
+        check = checkFlake { attr = "who"; expected = "sub"; subdir = true; };
+      };
+    })
+    (s "subdir-inputs" {
+      phases = twice {
+        sources = alt // {
+          x.flake = {
+            flake = "git+file:/fixtures/monoin?dir=sub"; inherit fetchOnTarget;
+            inputs.dep.follows = "alt";
+          };
+        };
+        check = checkFlake { attr = "msg"; expected = "monoin:alt"; subdir = true; generated = true; };
+      };
+    })
+    (s "dirty" {
+      phases = twice {
+        sources.x.flake = { flake = "/fixtures/dirty"; inherit fetchOnTarget; };
+        check = checkFlake { attr = "msg"; expected = "dirty:dep+inner,sub"; } + ''
+          test ! -e "$T"/x/untracked || fail "untracked file delivered"
+        '';
+      };
+    })
+    (s "unlocked" {
+      phases = [{
+        sources.x.flake = { flake = "/fixtures/unlocked"; inherit fetchOnTarget; };
+        expect.fail = "requires lock file changes";
+      }];
+    })
+    (s "notdir" {
+      phases = [{
+        sources = {
+          x.file = { path = "/fixtures/filesrc"; inputs.dep.follows = "p"; };
+          p.pipe = "/fixtures/pipe";
+        };
+        expect.fail = "error: source p is not a directory";
+      }];
+    })
+    (s "noinput-nested" {
+      phases = [{
+        sources.x.flake-input = { flake = "/fixtures/top"; name = "dep/nope"; inherit fetchOnTarget; };
+        expect.fail = "error: flake /fixtures/top has no input dep/nope";
+      }];
+    })
+    (s "shared" {
+      phases = twice {
+        sources = {
+          x.flake = { flake = "/fixtures/top"; inherit fetchOnTarget; };
+          dep.flake-input = { flake = "/fixtures/top"; name = "dep"; inherit fetchOnTarget; };
+          sub.flake-input = { flake = "/fixtures/top"; name = "sub"; fetchOnTarget = true; };
+        };
+        check = checkFlake { attr = "msg"; expected = "top:dep+inner,sub"; } + ''
+          expect_eq dep "$(nix_eval "$T"/dep#greeting)" dep+inner
+          expect_eq sub "$(nix_eval "$T"/sub#who)" sub
+        '';
+      };
+    })
+  ] ++ lib.optional (targetKind == "local")
+    # The target has the path the input is locked to.
+    (s "uselocal" {
+      phases = twice {
+        sources.x.flake = { flake = "/fixtures/uselocal"; fetchOnTarget = true; };
+        check = checkFlake { attr = "msg"; expected = "uselocal:alt"; };
+      };
+    })
+  ) targetKinds;
+
 }

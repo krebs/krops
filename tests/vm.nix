@@ -64,6 +64,12 @@ in pkgs.testers.runNixOSTest {
       pkgs.age pkgs.gnupg pkgs.pass pkgs.passage
     ];
     networking.firewall.allowedTCPPorts = [ 8000 9418 ];
+    # Resolving indirect references fails if the global registry can't be
+    # downloaded, which it can't in the VM.  Disabling it needs flakes, and a
+    # deploying machine using indirect references has them anyway.  The
+    # target doesn't, so its checks for flake support still mean something.
+    nix.settings.experimental-features = [ "nix-command" "flakes" ];
+    nix.settings.flake-registry = "";
     programs.ssh.extraConfig = ''
       StrictHostKeyChecking no
       UserKnownHostsFile /dev/null

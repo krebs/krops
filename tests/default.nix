@@ -1,5 +1,6 @@
-# NixOS VM tests for populate, one test per source type, one for features
-# spanning sources, and one for writeDeploy's arguments to nixos-rebuild.  Build all with nix-build tests, or one with,
+# NixOS VM tests for populate: one test per source type, one for features
+# spanning sources, one for edge cases of flakes, and one for writeDeploy's
+# arguments to nixos-rebuild.  Build all with nix-build tests, or one with,
 # e.g., nix-build tests -A flake.
 { pkgs ? import ../pkgs {} }:
 
