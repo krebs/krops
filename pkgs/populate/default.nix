@@ -264,19 +264,6 @@ let
           ${quote source.flake} ${quote (toString source.name)}
       exit 1
     '';
-    # jq filter selecting the flake or input in nix flake archive's output.
-    node =
-      if source.name == null then "."
-      else concatMapStrings (name: ".inputs[${toJSON name}]") inputPath;
-    # jq definitions for nix flake metadata's output, resolving a path of
-    # input names to the key of its lock node.
-    refs = /* jq */ ''
-      .locks as $l
-      | def ref($path):
-          reduce $path[] as $name ($l.root;
-            $l.nodes[.].inputs[$name] // error("no input \($name)")
-            | if type == "array" then ref(.) else . end);
-    '';
     # jq definitions for subdirectories containing flakes, which flake
     # references and lock entries name either as attribute dir or as query
     # parameter dir of their URL, depending on the version of Nix.  fetchTree
@@ -285,7 +272,7 @@ let
       def subdir:
         .dir // ((.url // "") | capture("[?&]dir=(?<dir>[^&]*)").dir) // "";
       def withoutSubdir:
-        del(.dir)
+        del(.__final, .dir)
         | if (.url | type) == "string" then
             .url |= (sub("(?<sep>[?&])dir=[^&]*&?"; "\(.sep)") | sub("[?&]$"; ""))
           else . end;
@@ -294,42 +281,82 @@ let
         | map(select(. != null) | subdir | select(. != ""))
         | first // "";
     '';
-    # jq filter selecting the locked input and its own inputs in nix flake
-    # metadata's output, as lock node keys with fetchTree arguments, the input
-    # first.  The flake itself has no lock entry, so its arguments are null.
-    locked = /* jq */ ''
+    # jq filter selecting the flake or input in nix flake metadata's output,
+    # by the path of input names $input, as what to fetch and the
+    # subdirectory containing it: {self, locked, subdir}.  Names follow the
+    # flake's lock file, follows included; an empty follows path removes an
+    # input.  The flake itself, and inputs given by paths relative to it, have
+    # self set instead of fetchTree arguments in locked.
+    selected = /* jq */ ''
       ${subdirs}
-      ${refs}
-        def deps($key):
-          $key, ($l.nodes[$key].inputs // {} | .[]
-            | if type == "array" then ref(.) else . end
-            | deps(.));
-        ref($input) as $key
-        | [$key] + ([deps($key)] | unique - [$key])
-        | map({
-            key: .,
-            locked: ($l.nodes[.].locked | if . == null then . else withoutSubdir end)
-          })
-    '';
-    # jq filter selecting the subdirectory containing the flake or input in
-    # nix flake metadata's output, or the empty string.
-    dir = /* jq */ ''
-      ${subdirs}
-      ${refs}
-        if $input == [] then subdirOf(.) else subdirOf($l.nodes[ref($input)]) end
-    '';
-    # jq filter replacing the null fetchTree arguments of the flake itself in
-    # the JSON array $locked with its locked reference.
-    selfLocked = /* jq */ ''
-      ${subdirs}
-      .locked as $self
-      | $locked
-      | .[0].locked = ($self | del(.__final) | withoutSubdir)
+      . as $m
+      | .locks as $l
+      | def ref($path; $depth):
+          if $depth > 64 then error("follows nest too deep") else
+            reduce $path[] as $name ($l.root;
+              (($l.nodes[.].inputs // {})[$name]) as $next
+              | if $next == null or $next == [] then error("no input \($name)")
+                elif ($next | type) == "array" then ref($next; $depth + 1)
+                else $next end)
+          end;
+        def join($a; $b):
+          if $a == "" then $b elif $b == "" then $a else "\($a)/\($b)" end;
+        def resolve($key; $depth):
+          $l.nodes[$key] as $node
+          | if $depth > 64 then error("parents nest too deep")
+            elif $key == $l.root then
+              { self: true, locked: null, subdir: subdirOf($m) }
+            elif $node.parent != null then
+              resolve(ref($node.parent; 0); $depth + 1) as $base
+              | $base + {
+                  subdir: join(join($base.subdir;
+                    $node.locked.path | ltrimstr("./") | rtrimstr("/") | if . == "." then "" else . end);
+                    subdirOf($node))
+                }
+            else
+              { self: false, locked: ($node.locked | withoutSubdir), subdir: subdirOf($node) }
+            end;
+        resolve(ref($input; 0); 0)
     '';
     # jq filter telling whether the target can fetch the flake itself, i.e.
     # whether its locked reference doesn't refer to the deploying machine.
     selfIsRemote = /* jq */ ''
       .locked | (.type != "path") and ((.url // "") | startswith("file:") | not)
+    '';
+    # jq filter replacing self in the selection $selected with the flake's
+    # locked reference.
+    selfLocked = /* jq */ ''
+      ${subdirs}
+      .locked as $self
+      | $selected + { self: false, locked: ($self | withoutSubdir) }
+    '';
+    # Shell function printing the store path $1, followed by the inputs its
+    # flake in the subdirectory $2 pins in its own lock file, using the nix
+    # command nix.  Without a lock file, locking would change the flake, so
+    # there are no such inputs.
+    closure = nix: /* sh */ ''
+      closure() {
+        printf '%s\n' "$1"
+        closure_dir=$1''${2:+/$2}
+        if test -e "$closure_dir"/flake.nix && test -e "$closure_dir"/flake.lock; then
+          ARCHIVE=$(
+            ${nix} flake archive --json --no-update-lock-file \
+                "path:$1''${2:+?dir=$2}"
+          ) \
+          ${nix} eval --impure --raw --expr '
+            let
+              # Inputs given by relative paths are part of their parent.
+              paths = node: builtins.concatMap
+                (input:
+                  (if input ? path then [ input.path ] else []) ++ paths input)
+                (builtins.attrValues (node.inputs or {}));
+            in
+              builtins.concatStringsSep "\n"
+                (paths (builtins.fromJSON (builtins.getEnv "ARCHIVE")))
+          '
+          echo
+        fi
+      }
     '';
     sentinel = "${dirOf target.path}/.populate";
     # Directory of garbage collector roots for the input's own inputs.
@@ -370,6 +397,9 @@ let
       mkdir -p ${quote inputsRoots}
       roots=
       while read -r path; do
+        if test -z "$path"; then
+          continue
+        fi
         root=$(basename "$path")
         if test "$(readlink ${quote inputsRoots}/"$root")" != "$path"; then
           nix-store --realise "$path" \
@@ -389,18 +419,16 @@ let
         rmdir ${quote inputsRoots}
       fi
     '';
-    # Reads lock node keys with fetchTree arguments as JSON array, the store
-    # path of the flake itself, and the subdirectory containing the flake or
-    # input from stdin, fetches them, and links the results.  The flake
-    # itself, if given, stands in for the first fetchTree arguments, which are
-    # null then, and gets added from the upload directory unless the store has
-    # it already.
+    # Reads the selection, as selected produces it, and the store path of the
+    # flake itself from stdin, fetches what's selected, unless it's the flake
+    # itself, which gets added from the upload directory unless the store has
+    # it already, then fetches the inputs its own lock file pins, and links
+    # the results.
     fetchAndLink = /* sh */ ''
       set -efu
       ${requireFlakes "fetching flake inputs on the target"}
-      read -r locked
+      read -r selected
       read -r self
-      read -r dir
       if test -n "$self" && ! nix-store --check-validity "$self" 2>/dev/null; then
         name=$(basename "$self" | cut -c34-)
         mv ${quote upload}/tree ${quote upload}/"$name"
@@ -412,31 +440,46 @@ let
           exit 1
         fi
       fi
-      # Inputs referring to local paths can only be fetched if the target has
-      # them as well.
-      paths=$(
-        FLAKE=${quote source.flake} LOCKED=$locked SELF=$self \
+      # The store path and the subdirectory, on separate lines.  Inputs
+      # referring to local paths can only be fetched if the target has them
+      # as well.
+      fetched=$(
+        FLAKE=${quote source.flake} SELECTED=$selected SELF=$self \
         nix eval --impure --raw --expr '
           let
+            selected = builtins.fromJSON (builtins.getEnv "SELECTED");
+            path =
+              if selected.self then builtins.getEnv "SELF"
+              else (builtins.fetchTree selected.locked).outPath;
+            dir = path + (if selected.subdir == "" then "" else "/" + selected.subdir);
+            lock =
+              if builtins.pathExists (dir + "/flake.lock")
+                then builtins.fromJSON (builtins.readFile (dir + "/flake.lock"))
+                else { nodes = {}; };
             localPath = locked:
-              if locked.type == "path" then locked.path
+              if (locked.type or null) == "path" then locked.path
               else let
                 match = builtins.match "file:(//)?(.*)" (locked.url or "");
               in
                 if match == null then null else builtins.elemAt match 1;
-            fetch = { key, locked }:
-              if locked == null then builtins.getEnv "SELF"
-              else let path = localPath locked; in
-                if path != null && !builtins.pathExists path then
-                  throw "flake ''${builtins.getEnv "FLAKE"}: input ''${key} refers to ''${path}, which does not exist on the target"
-                else
-                  (builtins.fetchTree locked).outPath;
+            missing = builtins.filter
+              (key: let
+                p = localPath (lock.nodes.''${key}.locked or {});
+              in
+                p != null && builtins.substring 0 1 p == "/" && !builtins.pathExists p)
+              (builtins.attrNames lock.nodes);
+            key = builtins.head missing;
           in
-            builtins.concatStringsSep "\n"
-              (map fetch (builtins.fromJSON (builtins.getEnv "LOCKED")))
+            if missing != [] then
+              throw "flake ''${builtins.getEnv "FLAKE"}: input ''${key} refers to ''${localPath lock.nodes.''${key}.locked}, which does not exist on the target"
+            else
+              path + "\n" + selected.subdir
         '
       )
-      printf '%s\n%s\n' "$dir" "$paths" | {
+      path=$(printf '%s\n' "$fetched" | sed -n 1p)
+      subdir=$(printf '%s\n' "$fetched" | sed -n 2p)
+      ${closure "nix"}
+      { printf '%s\n' "$subdir"; closure "$path" "$subdir"; } | {
         ${link}
       }
     '';
@@ -450,9 +493,10 @@ let
         METADATA=$metadata ARCHIVE=$archive \
         nix eval --impure --raw --expr '
           let
+            # Inputs given by relative paths are part of their parent.
             paths = node:
-              [ node.path ] ++
-              builtins.concatMap paths (builtins.attrValues node.inputs);
+              (if node ? path then [ node.path ] else []) ++
+              builtins.concatMap paths (builtins.attrValues (node.inputs or {}));
             metadata = builtins.fromJSON (builtins.getEnv "METADATA");
             archive = builtins.fromJSON (builtins.getEnv "ARCHIVE");
             # The subdirectory, as attribute dir or as query parameter dir
@@ -479,94 +523,86 @@ let
       throw "krops: source ${target.path}: copying flakes to targets with sudo is not supported"
     else if fetchOnTarget && source.name == null && isRemoteRef source.flake then
       runShell target archiveAndLink
-    else if fetchOnTarget then /* sh */ ''
+    else /* sh */ ''
       set -efu
 
       ${cached "metadata" /* sh */ ''
         ${nix'} flake metadata --json --no-update-lock-file ${quote source.flake}
       ''}
 
-      if ! locked=$(
-        ${jq}/bin/jq -ce --argjson input ${quote (toJSON inputPath)} ${quote locked} \
+      if ! selected=$(
+        ${jq}/bin/jq -ce --argjson input ${quote (toJSON inputPath)} ${quote selected} \
           "$cache" 2>/dev/null
       ); then
         ${noInput}
       fi
-      dir=$(
-        ${jq}/bin/jq -r --argjson input ${quote (toJSON inputPath)} ${quote dir} \
-          "$cache"
-      )
 
       self=
-      ${optionalString (source.name == null) /* sh */ ''
-        # The flake itself has no lock entry, so the target fetches it by its
-        # locked reference, if it can, or else receives it.
-        if ${jq}/bin/jq -e ${quote selfIsRemote} "$cache" >/dev/null; then
-          locked=$(
-            ${jq}/bin/jq -c --argjson locked "$locked" \
-                ${quote selfLocked} \
-              "$cache"
-          )
-        else
+      if printf '%s\n' "$selected" | ${jq}/bin/jq -e .self >/dev/null; then
+        ${if fetchOnTarget then /* sh */ ''
+          # The flake itself has no lock entry, so the target fetches it by
+          # its locked reference, if it can, or else receives it.
+          if ${jq}/bin/jq -e ${quote selfIsRemote} "$cache" >/dev/null; then
+            selected=$(
+              ${jq}/bin/jq -c --argjson selected "$selected" ${quote selfLocked} \
+                "$cache"
+            )
+          else
+            self=$(${jq}/bin/jq -r .path "$cache")
+            ${optionalString (!isLocalTarget target) /* sh */ ''
+              if ! printf '%s\n' "$self" | {
+                ${runShell target /* sh */ ''
+                  read -r self
+                  nix-store --check-validity "$self" 2>/dev/null
+                ''}
+              }; then
+                ${runShell target /* sh */ ''
+                  set -efu
+                  ${sentinelDirectory sentinel}
+                  ${removeUpload}
+                  mkdir -p ${quote upload}
+                ''}
+                # Without applying .rsync-filter files, which would change the flake.
+                ${rsync' (target // { path = "${upload}/tree"; })
+                         (rsyncDefaultConfig // { filterFiles = false; })
+                         /* sh */ ''"$self"''}
+              fi
+            ''}
+          fi
+        '' else /* sh */ ''
           self=$(${jq}/bin/jq -r .path "$cache")
-          ${optionalString (!isLocalTarget target) /* sh */ ''
-            if ! printf '%s\n' "$self" | {
-              ${runShell target /* sh */ ''
-                read -r self
-                nix-store --check-validity "$self" 2>/dev/null
-              ''}
-            }; then
-              ${runShell target /* sh */ ''
-                set -efu
-                ${sentinelDirectory sentinel}
-                ${removeUpload}
-                mkdir -p ${quote upload}
-              ''}
-              # Without applying .rsync-filter files, which would change the flake.
-              ${rsync' (target // { path = "${upload}/tree"; })
-                       (rsyncDefaultConfig // { filterFiles = false; })
-                       /* sh */ ''"$self"''}
-            fi
-          ''}
-        fi
-      ''}
-
-      printf '%s\n%s\n%s\n' "$locked" "$self" "$dir" | {
-        ${runShell target fetchAndLink}
-      }
-    '' else /* sh */ ''
-      set -efu
-
-      ${cached "archive" /* sh */ ''
-        ${nix'} flake archive --json --no-update-lock-file ${quote source.flake}
-      ''}
-
-      if ! ${jq}/bin/jq -e ${quote "${node} | .path"} "$cache" >/dev/null; then
-        ${noInput}
+        ''}
       fi
 
-      # The input followed by its own inputs, which flakes evaluated on the
-      # target need as well.
-      paths=$(${jq}/bin/jq -r ${quote "${node} | .. | .path? | strings"} "$cache")
+      ${if fetchOnTarget then /* sh */ ''
+        printf '%s\n%s\n' "$selected" "$self" | {
+          ${runShell target fetchAndLink}
+        }
+      '' else /* sh */ ''
+        path=$self
+        if test -z "$path"; then
+          path=$(
+            SELECTED=$selected ${nix'} eval --impure --raw --expr '
+              (builtins.fetchTree
+                (builtins.fromJSON (builtins.getEnv "SELECTED")).locked).outPath
+            '
+          )
+        fi
+        subdir=$(printf '%s\n' "$selected" | ${jq}/bin/jq -r .subdir)
+        ${closure nix'}
+        paths=$(closure "$path" "$subdir")
 
-      ${cached "metadata" /* sh */ ''
-        ${nix'} flake metadata --json --no-update-lock-file ${quote source.flake}
+        ${optionalString (!isLocalTarget target) /* sh */ ''
+          mkdir -p "$PWD"/bin
+          ln -fns ${sshNix' target} "$PWD"/bin/ssh
+          PATH=$PWD/bin:$PATH \
+          ${nix'} copy --to ${quote "ssh://${target.host}"} $paths >&2
+        ''}
+
+        printf '%s\n%s\n' "$subdir" "$paths" | {
+          ${runShell target link}
+        }
       ''}
-      dir=$(
-        ${jq}/bin/jq -r --argjson input ${quote (toJSON inputPath)} ${quote dir} \
-          "$cache"
-      )
-
-      ${optionalString (!isLocalTarget target) /* sh */ ''
-        mkdir -p "$PWD"/bin
-        ln -fns ${sshNix' target} "$PWD"/bin/ssh
-        PATH=$PWD/bin:$PATH \
-        ${nix'} copy --to ${quote "ssh://${target.host}"} $paths >&2
-      ''}
-
-      printf '%s\n%s\n' "$dir" "$paths" | {
-        ${runShell target link}
-      }
     '';
 
   pop.git = target: source: runShell target /* sh */ ''

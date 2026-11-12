@@ -147,6 +147,75 @@ cat > /fixtures/uselocal/flake.nix <<'NIX'
 NIX
 (cd /fixtures/uselocal && nix flake lock)
 
+# follow: a flake whose input dep draws its input inner from the flake's own
+# input inner, which is inner2, so the lock file records a follows path, and
+# dep's own lock file pins another inner than the flake's.
+mkdir /fixtures/www/src/inner2
+cat > /fixtures/www/src/inner2/flake.nix <<'NIX'
+{ outputs = _: { who = "inner2"; }; }
+NIX
+tarball inner2
+mkdir /fixtures/follow
+cat > /fixtures/follow/flake.nix <<NIX
+{
+  inputs.inner.url = "$url/inner2.tar.gz";
+  inputs.dep.url = "$url/dep.tar.gz";
+  inputs.dep.inputs.inner.follows = "inner";
+  outputs = { dep, ... }: { msg = "follow:\${dep.greeting}"; };
+}
+NIX
+(cd /fixtures/follow && nix flake lock)
+
+# nofollow: a flake that removes an input of its input, so the lock file
+# records an empty follows path.
+mkdir /fixtures/nofollow
+cat > /fixtures/nofollow/flake.nix <<NIX
+{
+  inputs.dep.url = "$url/dep.tar.gz";
+  inputs.dep.inputs.inner.follows = "";
+  outputs = _: { msg = "nofollow"; };
+}
+NIX
+(cd /fixtures/nofollow && nix flake lock)
+
+# cyc: a flake whose inputs cyca and cycb follow each other.
+for name in cyca cycb; do
+  other=$(test $name = cyca && echo cycb || echo cyca)
+  mkdir /fixtures/www/src/$name
+  cat > /fixtures/www/src/$name/flake.nix <<NIX
+{
+  inputs.other.url = "$url/$other.tar.gz";
+  outputs = _: { who = "$name"; };
+}
+NIX
+  tarball $name
+done
+mkdir /fixtures/cyc
+cat > /fixtures/cyc/flake.nix <<NIX
+{
+  inputs.a.url = "$url/cyca.tar.gz";
+  inputs.b.url = "$url/cycb.tar.gz";
+  inputs.a.inputs.other.follows = "b";
+  inputs.b.inputs.other.follows = "a";
+  outputs = { a, b, ... }: { msg = "cyc:\${a.who},\${b.who}"; };
+}
+NIX
+(cd /fixtures/cyc && nix flake lock)
+
+# rel: a flake in a Git work tree with an input in a subdirectory, referred
+# to by a relative path.
+mkdir -p /fixtures/rel/lib
+cat > /fixtures/rel/lib/flake.nix <<'NIX'
+{ outputs = _: { who = "lib"; }; }
+NIX
+cat > /fixtures/rel/flake.nix <<'NIX'
+{
+  inputs.lib.url = "path:./lib";
+  outputs = { lib, ... }: { msg = "rel:${lib.who}"; };
+}
+NIX
+(cd /fixtures/rel && nix flake lock && git init -q && commit rel)
+
 # noflake: a directory without flake.nix.
 mkdir /fixtures/noflake
 echo noflake > /fixtures/noflake/README

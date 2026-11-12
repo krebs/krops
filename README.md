@@ -394,8 +394,10 @@ flake's lock file, to the target.  This makes the lock file of a flake the
 single place that pins, e.g., nixpkgs, for flakes as well as for `NIX_PATH`.
 It works like the `flake` source type, but delivers the selected input
 instead of the flake, so the target path becomes a symlink to the input's
-store path, and the input's own inputs get garbage collector roots in
-`.populate/flake-inputs/<name>`.
+store path.  The inputs that the input's own lock file pins, which evaluating
+the input needs, get delivered as well, with garbage collector roots in
+`.populate/flake-inputs/<name>`.  An input without a lock file comes without
+its inputs, because locking it would change it.
 
 Because the target path points at the store path named by the lock file, it
 can be used in `NIX_PATH` as well as by flakes evaluated on the target,
@@ -410,7 +412,8 @@ Supported attributes:
 
 * `name` -
   name of the input to deliver.  Inputs of inputs are separated by `/`,
-  e.g. `stockholm/nixpkgs`.
+  e.g. `stockholm/nixpkgs`, and resolved as the flake's lock file resolves
+  them, so an input that follows another one names the other one.
 
 * `fetchOnTarget` (optional) -
   boolean that controls whether the target fetches the input itself instead

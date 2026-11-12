@@ -774,6 +774,40 @@ assert !(krops.isLocalTarget (targets.remote "/"));
         '';
       };
     })
+    (s "follows-empty" {
+      phases = twice {
+        sources.x.flake = { flake = "/fixtures/nofollow"; fetchOnTarget = true; };
+        check = checkFlake { attr = "msg"; expected = "nofollow"; };
+      };
+    })
+    (s "follows-cycle" {
+      phases = twice {
+        sources.x.flake = { flake = "/fixtures/cyc"; fetchOnTarget = true; };
+        check = checkFlake { attr = "msg"; expected = "cyc:cyca,cycb"; };
+      };
+    })
+    # Names resolve through the parent's lock file, so dep/inner is the
+    # parent's inner, which dep's inner follows.
+    (s "follows-name" {
+      phases = twice {
+        sources.x.flake-input = { flake = "/fixtures/follow"; name = "dep/inner"; inherit fetchOnTarget; };
+        check = checkFlake { attr = "who"; expected = "inner2"; };
+      };
+    })
+    # The delivered input comes with the inputs its own lock file pins, which
+    # evaluating it needs, not with the parent's inner, which it follows there.
+    (s "follows-closure" {
+      phases = twice {
+        sources.x.flake-input = { flake = "/fixtures/follow"; name = "dep"; inherit fetchOnTarget; };
+        check = checkFlake { attr = "greeting"; expected = "dep+inner"; } + roots 1;
+      };
+    })
+    (s "relative-input" {
+      phases = twice {
+        sources.x.flake = { flake = "/fixtures/rel"; fetchOnTarget = true; };
+        check = checkFlake { attr = "msg"; expected = "rel:lib"; };
+      };
+    })
   ] ++ lib.optional (targetKind == "local")
     # The target has the path the input is locked to.
     (s "uselocal" {
