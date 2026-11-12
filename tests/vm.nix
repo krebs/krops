@@ -152,7 +152,7 @@ in pkgs.testers.runNixOSTest {
                 for i, phase in enumerate(scenario["phases"]):
                     # A hang fails the scenario, not the whole test.
                     status, out = deployer.execute(
-                        f"HOME=/root timeout 600 {phase['populate']} 2>&1",
+                        f"env HOME=/root {phase['env']} timeout 600 {phase['populate']} 2>&1",
                         timeout=900,
                     )
                     if phase["expect"] is None:

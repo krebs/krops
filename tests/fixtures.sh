@@ -461,3 +461,13 @@ echo keep > /fixtures/filtered-parent/sub/keep
 echo garbage > /fixtures/filtered-parent/sub/garbage
 ln -s filtered-parent /fixtures/filtered-parent-link
 chown -h nobody /fixtures/filtered-parent-link
+
+# filtered-name, filtered-name-link: like filtered, but the filter file is in
+# a subdirectory whose name has a byte that rsync prints escaped in the C
+# locale.
+mkdir -p /fixtures/filtered-name/bär
+printf -- '- garbage\n' > /fixtures/filtered-name/bär/.rsync-filter
+echo keep > /fixtures/filtered-name/bär/keep
+echo garbage > /fixtures/filtered-name/bär/garbage
+ln -s filtered-name /fixtures/filtered-name-link
+chown -h nobody /fixtures/filtered-name-link

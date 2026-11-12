@@ -96,10 +96,11 @@ let
     # pass for failing for an unrelated reason, e.g. a misspelt option.
     # targetPath deploys to another path than the scenario's target
     # directory, and controlTargetPath is the control for a path that makes
-    # evaluation fail.
+    # evaluation fail.  env sets environment variables for populate, as
+    # arguments of env.
     phase = {
       sources, backup ? false, prune ? false, deploy ? null,
-      targetPath ? path,
+      targetPath ? path, env ? "",
       expect ? "success", control ? null, controlTargetPath ? null,
       check ? "", mutate ? null, checkDeployer ? null, mutateDeployer ? null,
     }: let
@@ -134,6 +135,7 @@ let
           null
       else {
         populate = toString (command sources targetPath);
+        inherit env;
         expect = if expect == "success" then null else expect.fail;
         # No phase gets around checking the canaries.
         check = script (check + "\ncanary_check\n");
@@ -337,7 +339,44 @@ assert !(krops.isLocalTarget (targets.remote "/"));
           ''}
         '';
       }));
-    }) [ null true false ]) targetKinds;
+    }) [ null true false ]) targetKinds
+    ++ concatMap (targetKind: let
+      affected = lib.versionAtLeast rsyncVersion "3.5.0";
+      unreadable = name: { path, file, dir ? "x", env ? "" }: scenario {
+        name = "file-${targetKind}-insecureLinks${name}";
+        inherit targetKind;
+        prepare = ''
+          mkdir -p "$T"/${dir}
+          echo old > "$T"/${dir}/garbage
+        '';
+        phases = twice ({
+          sources.x.file = { inherit path; };
+          inherit env;
+        } // (if affected then {
+          expect.fail = "can't read ${file}, so it would sync ${path}/ without it.";
+        } else {
+          check = ''
+            expect_eq keep "$(cat "$T"/${dir}/keep)" keep
+            test ! -e "$T"/${dir}/garbage || fail "garbage not excluded"
+          '';
+        }));
+      };
+    in [
+      # The filter file is in the directory above what gets synced, where it
+      # applies as well.
+      (unreadable "Parent" {
+        path = "/fixtures/filtered-parent-link/sub";
+        file = "/fixtures/filtered-parent-link/.rsync-filter";
+      })
+      # The filter file is in a directory whose name rsync prints escaped
+      # in the C locale.
+      (unreadable "Name" {
+        path = "/fixtures/filtered-name-link";
+        file = "/fixtures/filtered-name-link/bär/.rsync-filter";
+        dir = "x/bär";
+        env = "LC_ALL=C";
+      })
+    ]) targetKinds;
 
   flake = matrix "flake" {
     kind = [ "git" "path" "subdir" "remote" ];
