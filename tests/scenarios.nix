@@ -98,10 +98,11 @@ let
     # directory, and controlTargetPath is the control for a path that makes
     # evaluation fail.  env sets environment variables for populate, as
     # arguments of env.  interrupt ends populate after that many seconds,
-    # which it's expected not to finish before.
+    # which it's expected not to finish before.  output lists what a
+    # succeeding populate is expected to print.
     phase = {
       sources, backup ? false, prune ? false, deploy ? null,
-      targetPath ? path, env ? "", interrupt ? null,
+      targetPath ? path, env ? "", interrupt ? null, output ? [],
       expect ? "success", control ? null, controlTargetPath ? null,
       check ? "", mutate ? null, checkDeployer ? null, mutateDeployer ? null,
     }: let
@@ -136,7 +137,7 @@ let
           null
       else {
         populate = toString (command sources targetPath);
-        inherit env interrupt;
+        inherit env interrupt output;
         expect = if expect == "success" then null else expect.fail;
         # No phase gets around checking the canaries.
         check = script (check + "\ncanary_check\n");
@@ -331,6 +332,11 @@ assert !(krops.isLocalTarget (targets.remote "/"));
       } // (if affected && insecureLinks == null then {
         expect.fail = "can't read /fixtures/filtered-link/.rsync-filter, so it would sync /fixtures/filtered-link/ without it.";
       } else {
+        output = optional affected (
+          if insecureLinks
+            then "can't read /fixtures/filtered-link/.rsync-filter; it reads it with --insecure-links anyway, because insecureLinks is true."
+            else "can't read /fixtures/filtered-link/.rsync-filter, so it syncs /fixtures/filtered-link/ without it, because insecureLinks is false."
+        );
         check = ''
           expect_eq keep "$(cat "$T"/x/keep)" keep
           ${if excluded then ''
@@ -522,7 +528,49 @@ assert !(krops.isLocalTarget (targets.remote "/"));
         '';
       }
     ];
-  });
+  })
+  ++ map (targetKind: scenario (let
+    # The commit the first phase adds on top of gitHead, deterministic like
+    # the ones fixtures.sh creates.
+    gitThird = "c2e0f9d727337617a548284552909abe0f196d05";
+  in {
+    # A full clone fetches a commit that appears on the server afterwards,
+    # also without fetchAlways.
+    name = "git-${targetKind}-fetch";
+    inherit targetKind;
+    prepareDeployer = ''
+      git -C /fixtures/git/gitsrc.git update-ref -d refs/heads/extra
+    '';
+    phases = [
+      {
+        sources.x.git = { url = gitUrl; ref = gitHead; };
+        check = ''
+          expect_eq HEAD "$(git -C "$T"/x rev-parse HEAD)" ${gitHead}
+        '';
+        mutateDeployer = ''
+          export GIT_AUTHOR_NAME=krops GIT_AUTHOR_EMAIL=spam@krebsco.de
+          export GIT_COMMITTER_NAME=krops GIT_COMMITTER_EMAIL=spam@krebsco.de
+          export GIT_AUTHOR_DATE='1000000000 +0000' GIT_COMMITTER_DATE='1000000000 +0000'
+          export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
+          cd /fixtures/gitsrc
+          git checkout -q -B extra ${gitHead}
+          echo three > three
+          git add -A
+          git commit -q -m three
+          git push -q -f /fixtures/git/gitsrc.git extra
+          git checkout -q master
+          expect_eq "third commit" "$(git rev-parse extra)" ${gitThird}
+        '';
+      }
+      {
+        sources.x.git = { url = gitUrl; ref = gitThird; };
+        check = ''
+          expect_eq HEAD "$(git -C "$T"/x rev-parse HEAD)" ${gitThird}
+          test -e "$T"/x/three || fail "three missing"
+        '';
+      }
+    ];
+  })) targetKinds;
 
   pass = matrix "pass" {
     store = [ "pass" "pass-git" ];
@@ -917,6 +965,7 @@ assert !(krops.isLocalTarget (targets.remote "/"));
           sources.x.flake-input = { url = "/fixtures/top"; name = "sub"; inherit fetchOnTarget; };
           check = ''
             test ! -e "$T"/.populate/flake-inputs/x || fail "roots remain"
+            test ! -e "$T"/.populate/flake-inputs || fail "empty roots directory remains"
           '' + checkFlake { attr = "who"; expected = "sub"; subdir = true; };
         }
       ];
@@ -951,16 +1000,23 @@ assert !(krops.isLocalTarget (targets.remote "/"));
               test -e "$T"/$name || fail "$name removed"
             done
           '';
+          # An upload an interrupted run left behind.
+          mutate = ''
+            mkdir -p "$T"/.populate/flake-uploads/c/tree
+          '';
         }
         {
           # b changes its type, so its roots go, while b stays.
           sources = { inherit (sources) a; b.symlink = "a"; };
           prune = true;
+          output = map
+            (name: "pruning /var/krops/prune-${targetKind}/${name}")
+            [ "c" "d" "other" ];
           check = ''
             test -e "$T"/a/flake.nix || fail "a removed"
             expect_eq b "$(readlink "$T"/b)" a
             test -d "$T"/.populate || fail ".populate removed"
-            for name in c d other .populate/flake-inputs; do
+            for name in c d other .populate/flake-inputs .populate/flake-uploads; do
               test ! -e "$T"/$name || fail "$name not pruned"
             done
             if nix-store --gc --print-roots 2>/dev/null | grep -F "$T/"; then
@@ -1558,13 +1614,8 @@ assert !(krops.isLocalTarget (targets.remote "/"));
     };
     # A source deployed where a symlink to something outside is.  The link
     # gets replaced, never followed.
-    link = type: { sources, to, check }: s "link-${type}" {
-      isolate = true;
-      prepare = ''
-        mkdir -p "$T"
-        ln -s ${outside}/${to} "$T"/x
-      '';
-      phases = twice {
+    link = type: { sources, to, check, says ? true }: let
+      phase = {
         inherit sources;
         check = ''
           case $(readlink "$T"/x || :) in
@@ -1572,6 +1623,19 @@ assert !(krops.isLocalTarget (targets.remote "/"));
           esac
         '' + check;
       };
+    in s "link-${type}" {
+      isolate = true;
+      prepare = ''
+        mkdir -p "$T"
+        ln -s ${outside}/${to} "$T"/x
+      '';
+      phases = [
+        (phase // {
+          output = optional says
+            "replacing symlink /var/krops/link-${type}-${targetKind}/x, which points to ${outside}/${to}";
+        })
+        phase
+      ];
     };
     # Something of populate's state replaced by a symlink to outside between
     # two deploys.  The second one refuses to use it.
@@ -1604,6 +1668,13 @@ assert !(krops.isLocalTarget (targets.remote "/"));
       check = ''
         test -e "$T"/x/flake.nix || fail "flake.nix missing"
       '';
+    })
+    # What rsync logs about each item: what changed, and its size.
+    (s "rsync-log" {
+      phases = [{
+        sources.x.file = "/fixtures/alt";
+        output = [ "f+++++++++ flake.nix " "/53" ];
+      }];
     })
     # The link points at a Git work tree, which resetting and cleaning would
     # change.
@@ -1655,6 +1726,7 @@ assert !(krops.isLocalTarget (targets.remote "/"));
     (link "symlink" {
       sources = alt // { x.symlink = "alt"; };
       to = "dir";
+      says = false;
       check = ''
         expect_eq link "$(readlink "$T"/x)" alt
       '';

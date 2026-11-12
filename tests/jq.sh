@@ -5,7 +5,7 @@
 # usage: jq.sh DIR
 #
 # DIR contains the programs as selected.jq, selfIsRemote.jq, and
-# selfLocked.jq.
+# selfLocked.jq, and the Nix function for the target as metadataSubdir.nix.
 set -efu
 
 programs=$1
@@ -118,5 +118,32 @@ expect "locked reference of the flake itself" "$(
     jq -c --argjson selected '{"self":true,"locked":null,"subdir":"sub"}' \
       --from-file "$programs"/selfLocked.jq
 )" "$mono"
+
+# The Nix function finding the subdirectory on the target, which may lack
+# jq.
+# usage: metadata_subdir METADATA
+metadata_subdir() {
+  METADATA=$1 nix-instantiate --eval --strict --json --store dummy:// --expr "
+    (import $programs/metadataSubdir.nix)
+      (builtins.fromJSON (builtins.getEnv \"METADATA\"))
+  " 2>&1 || :
+}
+export HOME=${TMPDIR:-/tmp}
+export NIX_STATE_DIR=$HOME/nix-state
+expect "subdirectory as attribute, on the target" "$(metadata_subdir '{
+  "locked": { "type": "tarball", "url": "http://x/mono.tar.gz", "dir": "sub" },
+  "original": { "type": "tarball", "url": "http://x/mono.tar.gz", "dir": "sub" }
+}')" '"sub"'
+expect "subdirectory in the URL, on the target" "$(metadata_subdir '{
+  "locked": { "type": "tarball", "url": "http://x/mono.tar.gz?dir=sub&narHash=sha256-mono" },
+  "original": { "type": "tarball", "url": "http://x/mono.tar.gz?dir=sub" }
+}')" '"sub"'
+expect "subdirectory in the original reference only, on the target" "$(metadata_subdir '{
+  "locked": { "type": "tarball", "url": "http://x/mono.tar.gz" },
+  "original": { "type": "tarball", "url": "http://x/mono.tar.gz?rev=1&dir=sub" }
+}')" '"sub"'
+expect "no subdirectory, on the target" "$(metadata_subdir '{
+  "locked": { "type": "path", "path": "/src/top" }
+}')" '""'
 
 exit "$failed"

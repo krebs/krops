@@ -701,14 +701,17 @@ outside the target directory changed.  The tests deploy every combination
 of a source type's options, except for patches, which the features test
 covers, to the deploying machine itself, to a remote target
 as `root`, and to a remote target using `sudo`, and check the result after
-deploying and after deploying again.
+deploying and after deploying again.  The scenarios whose results depend on
+the version of rsync also run with rsync 3.4.1 and 3.5.0, which
+`tests/rsync.nix` builds, whatever version nixpkgs has.
 The tests require KVM and nixpkgs with `pkgs.testers.runNixOSTest`
 (23.05 or later), and use `<nixpkgs>` by default.
 
 ```sh
-nix-build tests            # all tests
-nix-build tests -A flake   # the test for one source type
-nix-build tests -A jq      # populate's jq programs for flakes, without VMs
+nix-build tests                 # all tests
+nix-build tests -A flake        # the test for one source type
+nix-build tests -A rsync-3-5-0  # the scenarios depending on rsync's version
+nix-build tests -A jq           # populate's programs for flakes, without VMs
 ```
 
 

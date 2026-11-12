@@ -1,7 +1,7 @@
 # Runs scenarios in a NixOS VM test with two machines: deployer, which runs
 # populate, and target, which it deploys to via ssh.  Local scenarios deploy
 # to deployer itself.
-{ pkgs, name, scenarios, gitHead }:
+{ pkgs, name, scenarios, gitHead, rsync ? pkgs.rsync }:
 
 let
   inherit (pkgs) lib;
@@ -35,7 +35,7 @@ let
     nix.settings.substituters = lib.mkForce [];
     environment.systemPackages = [
       pkgs.git
-      pkgs.rsync
+      rsync
       (pkgs.writeScriptBin "nixos-rebuild" (builtins.readFile ./nixos-rebuild.sh))
     ];
     # The stand-in replaces nixos-rebuild.
@@ -162,6 +162,11 @@ in pkgs.testers.runNixOSTest {
                     elif phase["expect"] is None:
                         if status != 0:
                             raise Exception(f"populate {i} fails:\n{out}")
+                        for expected in phase["output"]:
+                            if expected not in out:
+                                raise Exception(
+                                    f"populate {i} doesn't print {expected!r}:\n{out}"
+                                )
                     elif status == 0 or phase["expect"] not in out:
                         raise Exception(
                             f"populate {i} doesn't fail with {phase['expect']!r}:\n{out}"
