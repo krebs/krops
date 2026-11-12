@@ -114,6 +114,27 @@ let {
     in {
       quote = x: if x == "" then "''" else lib.stringAsChars quoteChar x;
 
+      # Shell code defining the function url_path, which prints the path $1
+      # as it goes into a URL: with every byte percent-encoded that isn't a
+      # letter, a digit, or one of -._~/.  Nix decodes that, and otherwise
+      # takes, e.g., ? and # for delimiters, and refuses blanks.
+      urlPath = /* sh */ ''
+        url_path() {
+          printf %s "$1" | od -An -v -tx1 | tr -s ' ' '\n' |
+          while read -r url_byte; do
+            case $url_byte in
+              "") ;;
+              2[d-f]|3[0-9]|4[1-9a-f]|5[0-9a]|5f|6[1-9a-f]|7[0-9a]|7e)
+                printf "\\$(printf %o "0x$url_byte")"
+                ;;
+              *)
+                printf '%%%s' "$url_byte"
+                ;;
+            esac
+          done
+        }
+      '';
+
       # Shell code that enables flakes for the Nix commands following it, and
       # fails unless Nix supports them, i.e. is version 2.4 or later.  `what`
       # names what needs flakes, for the error message.

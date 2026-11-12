@@ -1321,6 +1321,20 @@ assert !(krops.isLocalTarget (targets.remote "/"));
         }
       ];
     }))
+    # Pruning entries whose names a shell's read would strip or split.
+    (s "prune-names" {
+      prepare = ''
+        mkdir -p "$T/ lead" "$T/trail " "$T/$(printf 'new\nline')" "$T/axb" "$T/[b]"
+      '';
+      phases = [{
+        sources = alt;
+        prune = true;
+        check = ''
+          # In the C locale, ls sorts by bytes, so . comes first.
+          expect_eq entries "$(LC_ALL=C ls -A "$T" | tr '\n' ' ')" '.populate alt '
+        '';
+      }];
+    })
     # A signal ending populate leaves neither the ssh master nor the
     # temporary directory.
     (s "interrupt" {
@@ -1414,14 +1428,23 @@ assert !(krops.isLocalTarget (targets.remote "/"));
         }
       ];
     })
-    (modes "source-name" ({ draw, flake, ... }: {
+    # Source names that aren't input names, or that Nix has another use
+    # for, both of sources inputs get drawn from and of sources drawing them.
+    (modes "source-name" ({ draw, flake, ... }: let
+      x = from: { path = "/fixtures/filesrc"; } // draw { dep.follows = from; };
+    in {
       phases = twice {
         sources = {
           "alt-1.0".file = "/fixtures/alt";
-          x.file = { path = "/fixtures/filesrc"; } // draw { dep.follows = "alt-1.0"; };
+          self.file = "/fixtures/alt";
+          x.file = x "alt-1.0";
+          y.file = x "self";
+          "a.b_c-d".file = x "self";
         };
         check = ''
-          expect_eq msg "$(nix_eval_online ${flake "x"}#msg)" top:alt,sub
+          expect_eq x "$(nix_eval_online ${flake "x"}#msg)" top:alt,sub
+          expect_eq y "$(nix_eval_online ${flake "y"}#msg)" top:alt,sub
+          expect_eq a.b_c-d "$(nix_eval_online ${flake "a.b_c-d"}#msg)" top:alt,sub
         '';
       };
     }))
@@ -1661,13 +1684,16 @@ assert !(krops.isLocalTarget (targets.remote "/"));
       ])
     # Symlinks to outside among what populate removes: leftovers of
     # interrupted runs, state of sources that are gone, and, when pruning,
-    # entries of the target directory.  They get removed as links.
+    # entries of the target directory.  They get removed as links.  So do
+    # hard links to a read-only file outside, whose mode stays.
     (s "leftovers" {
       isolate = true;
       prepare = ''
-        mkdir -p "$T"
+        mkdir -p "$T"/hard
         ln -s ${outside}/dir "$T"/other
         ln -s ${outside}/repo "$T"/repo
+        ln ${outside}/dir/sub/file "$T"/hard/link
+        ln ${outside}/dir/sub/file "$T"/hardlink
       '';
       phases = [
         {
@@ -1697,13 +1723,38 @@ assert !(krops.isLocalTarget (targets.remote "/"));
           sources = stateful;
           prune = true;
           check = ''
-            for name in other repo .populate/flake-inputs/gone .populate/flake-uploads; do
+            for name in other repo hard hardlink .populate/flake-inputs/gone .populate/flake-uploads; do
               test ! -L "$T"/$name && test ! -e "$T"/$name || fail "$name not pruned"
             done
           '';
         }
       ];
     })
+    # A target path with characters that mean something to shells and in
+    # URLs.
+    (s "odd-target" (let
+      targetPath = "/var/krops/odd-target-${targetKind}/a b*c?d#e%f";
+    in {
+      isolate = true;
+      phases = twice {
+        sources = stateful // {
+          g.git = { url = gitUrl; ref = gitHead; };
+          p.pipe = "/fixtures/pipe";
+        };
+        inherit targetPath;
+        prune = true;
+        check = ''
+          D=${lib.escapeShellArg targetPath}
+          test -e "$D"/alt/flake.nix || fail "alt missing"
+          expect_eq HEAD "$(git -C "$D"/g rev-parse HEAD)" ${gitHead}
+          expect_eq p "$(cat "$D"/p)" piped
+          expect_eq entries "$(ls "$T")" 'a b*c?d#e%f'
+          gc
+          expect_eq greeting "$(nix_eval "$(readlink -f "$D"/x)"#greeting)" hello+alt
+          expect_eq msg "$(nix_eval "$(readlink -f "$D"/y)"#msg)" top:dep+inner,sub
+        '';
+      };
+    }))
     # The target directory itself may be a symlink: what it points to is the
     # target directory then.
     (s "linked-target" {
@@ -1757,7 +1808,7 @@ assert !(krops.isLocalTarget (targets.remote "/"));
             expect = "eval-error";
             control = { ok.file = "/fixtures/alt"; };
           })
-          [ "" "." ".." ".populate" "a/b" "../x" "/etc" "a\nb" ];
+          [ "" "." ".." ".populate" "a/b" "../x" "/etc" "a\nb" "a b" "a*b" "a?b" "a+b" "a=b" "-a" ];
       })
       # Target paths that aren't absolute, that are the root directory, or
       # that resolve to another directory than they name.

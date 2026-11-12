@@ -297,9 +297,9 @@ whatever is at the target path of a source, and with `prune` it removes
 everything else.  It doesn't change or remove anything outside:
 
 * Target paths must be absolute, must not be the root directory, and must not
-  contain `..`.  Source names must be file names other than `.`, `..`, and
-  `.populate`, without slashes and control characters.  Anything else fails
-  when evaluating.
+  contain `..`.  Source names must consist of letters, digits, and the
+  characters `._-`, not start with `-`, and be neither `.`, `..`, nor
+  `.populate`.  Anything else fails when evaluating.
 
 * A symlink at the target path of a source gets replaced by what the source
   delivers, not followed, and populate says so.  To keep a source elsewhere,

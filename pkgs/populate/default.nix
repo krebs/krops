@@ -6,11 +6,13 @@ with shell;
 let
   # Populate replaces and removes what's at the target paths of sources, so
   # it refuses names that lead out of the target directory, to the directory
-  # itself, or to its own state.
+  # itself, or to its own state.  The remaining names are portable file
+  # names, which mean themselves to shells, find, and in URLs, and which the
+  # names of the scripts populating the sources may contain.
   checkSourceName = name:
-    if elem name [ "" "." ".." ".populate" ] ||
-        builtins.match "[^/[:cntrl:]]+" name == null then
-      throw "krops: source name ${toJSON name} can't be used: it must be a file name other than ., .., and .populate, without slashes and control characters"
+    if elem name [ "." ".." ".populate" ] ||
+        builtins.match "[0-9A-Za-z._][0-9A-Za-z._-]*" name == null then
+      throw "krops: source name ${toJSON name} can't be used: it must consist of letters, digits, and the characters ._-, not start with -, and be neither ., .., nor .populate"
     else
       true;
 
@@ -71,6 +73,40 @@ let
       chmod -R u+w ${path}
       rm -fR ${path}
     fi
+  '';
+
+  # Shell code that removes the entries of the directory dir, a shell word,
+  # that aren't named names.  find, unlike a loop reading names, copes with
+  # every name, e.g. ones that end in blanks or contain newlines.  Entries of
+  # populate's own state get removed like removeTree does.  Entries of the
+  # target directory get removed without making them writable first, which
+  # would change files elsewhere that are hard links to files therein; for
+  # those, log is a shell word for the directory's name in the line that
+  # gets printed for each entry.
+  removeOthers = { dir, names, log ? null }: /* sh */ ''
+    find ${dir} -mindepth 1 -maxdepth 1 \
+        ${concatMapStringsSep " " (name: "! -name ${quote name}") names} \
+        -exec sh -c '
+          ${optionalString (log != null) /* sh */ ''
+            log=$1
+            shift
+          ''}
+          for path; do
+            ${optionalString (log != null) /* sh */ ''
+              >&2 printf "pruning %s/%s\n" "$log" "''${path##*/}"
+            ''}
+            ${if log != null then /* sh */ ''
+              rm -fR "$path"
+            '' else /* sh */ ''
+              if test -L "$path"; then
+                rm "$path"
+              else
+                chmod -R u+w "$path"
+                rm -fR "$path"
+              fi
+            ''}
+          done
+        ' sh ${optionalString (log != null) log} {} +
   '';
 
   # Shell code that removes a symlink at path, saying so, because the link
@@ -191,7 +227,7 @@ let
     # directory may be, so paths get resolved.
     url = name:
       if generated ? ${name}
-        then ''"path:$(readlink -f ${quote "${flakesDir}/${name}"})"''
+        then ''"path:$(url_path "$(readlink -f ${quote "${flakesDir}/${name}"})")"''
         else ''"$(flake_url ${quote name})"'';
     check = name: source:
       if source == name then
@@ -268,15 +304,17 @@ let
               printf '%s\n' "$@"
               # Sources outside the store can change without changing their
               # path.
-              for arg; do
-                case $arg in
-                  path:/nix/store/*) ;;
-                  path:*|git+file:*)
-                    arg=''${arg#*:}
-                    nix-hash --type sha256 "''${arg%%\?*}"
-                    ;;
+              ${concatMapStrings (source: /* sh */ ''
+                drawn=$(readlink -f ${quote (
+                  if generated ? ${source}
+                    then "${flakesDir}/${source}"
+                    else "${target.path}/${source}"
+                )})
+                case $drawn in
+                  /nix/store/*) ;;
+                  *) nix-hash --type sha256 "$drawn" ;;
                 esac
-              done
+              '') (unique (drawnFrom name))}
             ''}
           } | sha256sum | cut -c-64
         )
@@ -322,7 +360,7 @@ let
               ${overrideArgs name}
               # Not just the path, which Nix takes for the enclosing Git
               # work tree, if any.
-              nix flake lock "$@" "path:$work''${subdir:+?dir=$subdir}" >&2
+              nix flake lock "$@" "path:$(url_path "$work")''${subdir:+?dir=$subdir}" >&2
             ''}
             result=$(nix-store --add-fixed --recursive sha256 "$work")
             ${removeWork}
@@ -386,7 +424,7 @@ let
           echo '}'
         } > flake.nix
         # Not just ., which Nix takes for the enclosing Git work tree, if any.
-        nix flake lock "path:$(pwd -P)" >&2
+        nix flake lock "path:$(url_path "$(pwd -P)")" >&2
       )
     '';
     process = name:
@@ -394,17 +432,11 @@ let
       (if generated ? ${name} then flake name
        else if drawing ? ${name} && !(derived ? ${name}) then rewrite name
        else "");
-    # Removes the entries of directory dir that aren't in names.
-    removeOthers = dir: names: /* sh */ ''
+    # Removes the entries of the state directory dir that sources named
+    # names don't need anymore, and the directory once it's empty.
+    removeStale = dir: names: /* sh */ ''
       if test -d ${quote dir}; then
-        ls -A ${quote dir} | while read -r name; do
-          case ${quote " ${toString names} "} in
-            *" $name "*) ;;
-            *)
-              ${removeTree ''${quote dir}/"$name"''}
-              ;;
-          esac
-        done
+        ${removeOthers { dir = quote dir; inherit names; }}
         if test -z "$(ls -A ${quote dir})"; then
           rmdir ${quote dir}
         fi
@@ -419,6 +451,8 @@ let
       ${optionalString (names != []) /* sh */ ''
         ${optionalString (drawing != {})
           (requireFlakes "drawing flake inputs from sources")}
+
+        ${urlPath}
 
         # Nix rewrites lock files in place, which also changes what else is
         # a hard link to the lock file, e.g. in a backup, or what it is a
@@ -440,12 +474,12 @@ let
           fi
           if test -e "$path"/.git; then
             if test -e "$path"/.gitmodules; then
-              printf 'git+file:%s?submodules=1' "$path"
+              printf 'git+file:%s?submodules=1' "$(url_path "$path")"
             else
-              printf 'git+file:%s' "$path"
+              printf 'git+file:%s' "$(url_path "$path")"
             fi
           else
-            printf 'path:%s' "$path"
+            printf 'path:%s' "$(url_path "$path")"
           fi
         }
 
@@ -483,16 +517,15 @@ let
         rmdir ${quote "${sentinel}/flake-inputs"}
       fi
       # Remove what sources left behind that don't need it anymore.
-      ${removeOthers flakesDir (attrNames generated)}
-      ${removeOthers derivedDir (attrNames derived)}
-      ${removeOthers patchesDir (attrNames patched)}
+      ${removeStale flakesDir (attrNames generated)}
+      ${removeStale derivedDir (attrNames derived)}
+      ${removeStale patchesDir (attrNames patched)}
     '';
 
   # Removes entries of the target directory that aren't sources, garbage
   # collector roots of flake inputs of sources that aren't flake or
   # flake-input sources, and uploads left behind by interrupted runs.
   prune' = target: sources: let
-    pattern = names: concatMapStringsSep "|" quote names;
     flakeNames = attrNames (filterAttrs
       (_: source: elem source.type [ "flake" "flake-input" ])
       sources);
@@ -500,23 +533,14 @@ let
     set -efu
     ${useState "${target.path}/.populate" []}
     cd ${quote target.path}
-    ls -A | while read -r name; do
-      case $name in
-        ${pattern (attrNames sources ++ [ ".populate" ])}) ;;
-        *)
-          >&2 printf 'pruning %s\n' ${quote target.path}/"$name"
-          rm -fR ./"$name"
-          ;;
-      esac
-    done
+    ${removeOthers {
+      dir = ".";
+      names = attrNames sources ++ [ ".populate" ];
+      log = quote target.path;
+    }}
     roots=.populate/flake-inputs
     if test -d "$roots"; then
-      ls -A "$roots" | while read -r name; do
-        case $name in
-          ${optionalString (flakeNames != []) "${pattern flakeNames}) ;;"}
-          *) rm -fR "$roots"/"$name" ;;
-        esac
-      done
+      ${removeOthers { dir = ''"$roots"''; names = flakeNames; }}
       if test -z "$(ls -A "$roots")"; then
         rmdir "$roots"
       fi
@@ -1150,6 +1174,7 @@ let
         ${optionalString config.useChecksum /* sh */ "--checksum"} \
         ${optionalString target.sudo /* sh */ "--rsync-path=\"sudo rsync\""} \
         -e ${quote (ssh' target)} \
+        --protect-args \
         $insecure_links \
         --itemize-changes \
         --out-format=${quote "%i %n%L %'''b/%'''l"} \
