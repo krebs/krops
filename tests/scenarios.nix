@@ -455,7 +455,7 @@ assert !(krops.isLocalTarget (targets.remote "/"));
 
   # writeDeploy's arguments to nixos-rebuild, which a stand-in records.
   deploy = matrix "deploy" {
-    flake = [ false true ];
+    flake = [ "none" "source" "generated" ];
     etcFlake = [ false true ];
     buildTarget = [ false true ];
   } (flags: ctx: let
@@ -468,8 +468,14 @@ assert !(krops.isLocalTarget (targets.remote "/"));
         "--target-host" "${target.user}@${target.host}"
       ]
       ++ optional (flags.buildTarget && target.sudo) "--use-remote-sudo"
-      ++ optionals flags.flake [ "--flake" "${build.path}/x" ]
-      ++ optional (flags.etcFlake && !flags.flake) "--no-flake";
+      ++ {
+        none = [];
+        source = [ "--flake" "${build.path}/x" ];
+        # Generated flakes as path:, which an enclosing Git work tree doesn't
+        # capture.
+        generated = [ "--flake" "path:${build.path}/.populate/flakes/x" ];
+      }.${flags.flake}
+      ++ optional (flags.etcFlake && flags.flake == "none") "--no-flake";
   in
     # The local target can't have another build target.
     if flags.buildTarget && ctx.targetKind == "local" then null else {
@@ -485,17 +491,20 @@ assert !(krops.isLocalTarget (targets.remote "/"));
         ''}
       '';
       phases = twice {
-        sources.x =
-          if flags.flake then {
-            flake = {
+        sources =
+          if flags.flake == "none" then {
+            x.file = "/fixtures/alt";
+          } else alt // {
+            x.flake = {
               flake = "/fixtures/top";
               fetchOnTarget = ctx.targetKind == "sudo";
+              inputs = optionalAttrs (flags.flake == "generated") {
+                dep.follows = "alt";
+              };
             };
-          } else {
-            file = "/fixtures/alt";
           };
         deploy = {
-          flake = if flags.flake then "x" else null;
+          flake = if flags.flake == "none" then null else "x";
         } // optionalAttrs flags.buildTarget {
           inherit buildTarget;
         };
@@ -891,6 +900,22 @@ assert !(krops.isLocalTarget (targets.remote "/"));
         };
         check = ''
           expect_eq msg "$(nix_eval "$T"/.populate/flakes/x#msg)" data:hello
+        '';
+      };
+    })
+    # The target directory in a Git work tree.
+    (s "gitdir" {
+      prepare = ''
+        mkdir -p "$T"
+        git -C "$T" init -q
+      '';
+      phases = twice {
+        sources = alt // {
+          x.file = { path = "/fixtures/filesrc"; inputs.dep.follows = "alt"; };
+        };
+        check = ''
+          # Not just the path, which Nix takes for the enclosing work tree.
+          expect_eq msg "$(nix_eval_online path:"$T"/.populate/flakes/x#msg)" top:alt,sub
         '';
       };
     })

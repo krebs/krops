@@ -120,7 +120,8 @@ let
           printf '  outputs = inputs: inputs.%s;\n' ${quote (toJSON name)}
           echo '}'
         } > flake.nix
-        nix flake lock >&2
+        # Not just ., which Nix takes for the enclosing Git work tree, if any.
+        nix flake lock ${quote "path:${flakesDir}/${name}"} >&2
       )
     '';
   in

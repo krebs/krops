@@ -15,7 +15,11 @@ in
           (lib.shell.requireFlakes "deploying a flake")}
         NIX_PATH=${lib.escapeShellArg target.path} \
         nixos-rebuild ${lib.escapeShellArgs (args ++ lib.optionals (flake != null) [
-          "--flake" "${target.path}/${flake}"
+          "--flake"
+          # Generated flakes as path:, not just their paths, which Nix takes
+          # for the enclosing Git work tree, if any.
+          (lib.optionalString (lib.hasPrefix ".populate/flakes/" flake) "path:" +
+            "${target.path}/${flake}")
         ])} ${lib.optionalString (flake == null)
           # nixos-rebuild deploys /etc/nixos/flake.nix if it exists.  Any
           # nixos-rebuild doing so supports --no-flake.
