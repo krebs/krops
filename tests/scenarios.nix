@@ -585,29 +585,33 @@ assert !(krops.isLocalTarget (targets.remote "/"));
   });
 
   # writeDeploy's arguments to nixos-rebuild, which a stand-in records.
+  # flake is what gets deployed: nothing, or a flake from a file, git, or
+  # flake source, or one whose inputs get drawn from a source, by rewriting
+  # its lock file or through a generated flake.
   deploy = matrix "deploy" {
-    flake = [ "none" "source" "rewrite" "generated" ];
+    flake = [ "none" "file" "git" "source" "rewrite" "generated" ];
     etcFlake = [ false true ];
     buildTarget = [ false true ];
   } (flags: ctx: let
     target = targets.${ctx.targetKind} ctx.path;
     buildTarget = targets.local "${ctx.path}-build";
     build = if flags.buildTarget then buildTarget else target;
+    # Without a user, ssh decides.
+    userHost = target:
+      optionalString (target.user != null && target.user != "") "${target.user}@" +
+      target.host;
     expected = [ "switch" ]
       ++ optionals flags.buildTarget [
-        "--build-host" "${buildTarget.user}@${buildTarget.host}"
-        "--target-host" "${target.user}@${target.host}"
+        "--build-host" (userHost buildTarget)
+        "--target-host" (userHost target)
       ]
-      ++ optional (flags.buildTarget && target.sudo) "--use-remote-sudo"
-      ++ {
-        none = [];
-        source = [ "--flake" "${build.path}/x" ];
-        rewrite = [ "--flake" "${build.path}/x" ];
-        # Generated flakes as path:, which an enclosing Git work tree doesn't
-        # capture.
-        generated = [ "--flake" "path:${build.path}/.populate/flakes/x" ];
-      }.${flags.flake}
-      ++ optional (flags.etcFlake && flags.flake == "none") "--no-flake";
+      ++ optional (flags.buildTarget && target.sudo) "--use-remote-sudo";
+    # The flake's directory, which gets deployed by its resolved path, as
+    # path:, so no enclosing Git work tree captures it, or as the Git work
+    # tree it is.
+    flakeDir =
+      if flags.flake == "generated" then ".populate/flakes/x" else "x";
+    scheme = if flags.flake == "git" then "git+file" else "path";
   in
     # The local target can't have another build target.
     if flags.buildTarget && ctx.targetKind == "local" then null else {
@@ -623,17 +627,18 @@ assert !(krops.isLocalTarget (targets.remote "/"));
         ''}
       '';
       phases = twice {
-        sources =
-          if flags.flake == "none" then {
-            x.file = "/fixtures/alt";
-          } else alt // {
-            x.flake = {
-              url = "/fixtures/top";
-              fetchOnTarget = ctx.targetKind == "sudo";
-            } // drawInputs (if flags.flake == "source" then "none" else flags.flake) {
-              dep.follows = "alt";
-            };
+        sources = {
+          none.x.file = "/fixtures/alt";
+          file.x.file = "/fixtures/alt";
+          git.x.git = { url = gitUrl; ref = gitHead; };
+        }.${flags.flake} or (alt // {
+          x.flake = {
+            url = "/fixtures/top";
+            fetchOnTarget = ctx.targetKind == "sudo";
+          } // drawInputs (if flags.flake == "source" then "none" else flags.flake) {
+            dep.follows = "alt";
           };
+        });
         deploy = {
           flake = if flags.flake == "none" then null else "x";
         } // optionalAttrs flags.buildTarget {
@@ -642,8 +647,13 @@ assert !(krops.isLocalTarget (targets.remote "/"));
         check = ''
           expect_eq user "$(sed -n 1p /tmp/nixos-rebuild.log)" 0
           expect_eq NIX_PATH "$(sed -n 2p /tmp/nixos-rebuild.log)" ${build.path}
-          expect_eq arguments "$(sed -n 3p /tmp/nixos-rebuild.log)" \
-              ${lib.escapeShellArg (concatStringsSep " " expected)}
+          expected=${lib.escapeShellArg (concatStringsSep " " expected)}
+          ${if flags.flake == "none" then optionalString flags.etcFlake ''
+            expected="$expected --no-flake"
+          '' else ''
+            expected="$expected --flake ${scheme}:$(readlink -f ${build.path}/${flakeDir})"
+          ''}
+          expect_eq arguments "$(sed -n 3p /tmp/nixos-rebuild.log)" "$expected"
         '';
       };
     });

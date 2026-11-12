@@ -8,22 +8,41 @@ in
     flake ? null,
     useNixOutputMonitor
   }:
-  args: target:
+  args: target: let
+    # The flake's directory in the target directory, and the name of the
+    # NixOS configuration with its #, if any.
+    flakeDir = lib.head (lib.splitString "#" flake);
+    flakeAttr = lib.removePrefix flakeDir flake;
+  in
     runShell target {}
       (withNixOutputMonitor target useNixOutputMonitor /* sh */ ''
-        ${lib.optionalString (flake != null)
-          (lib.shell.requireFlakes "deploying a flake")}
+        ${lib.optionalString (flake != null) /* sh */ ''
+          ${lib.shell.requireFlakes "deploying a flake"}
+          ${lib.shell.urlPath}
+          # A Git work tree gets deployed as such.  Anything else gets
+          # deployed as path:, not just by its path, which Nix takes for the
+          # enclosing Git work tree, if any.  Nix refuses URLs with symlinks
+          # on the way, which the target directory may be, or the source.
+          flake=$(readlink -f ${lib.escapeShellArg "${target.path}/${flakeDir}"})
+          if test -e "$flake"/.git; then
+            if test -e "$flake"/.gitmodules; then
+              flake=git+file:$(url_path "$flake")?submodules=1
+            else
+              flake=git+file:$(url_path "$flake")
+            fi
+          else
+            flake=path:$(url_path "$flake")
+          fi
+        ''}
         NIX_PATH=${lib.escapeShellArg target.path} \
-        nixos-rebuild ${lib.escapeShellArgs (args ++ lib.optionals (flake != null) [
-          "--flake"
-          # Generated flakes as path:, not just their paths, which Nix takes
-          # for the enclosing Git work tree, if any.
-          (lib.optionalString (lib.hasPrefix ".populate/flakes/" flake) "path:" +
-            "${target.path}/${flake}")
-        ])} ${lib.optionalString (flake == null)
-          # nixos-rebuild deploys /etc/nixos/flake.nix if it exists.  Any
-          # nixos-rebuild doing so supports --no-flake.
-          "$(test -e /etc/nixos/flake.nix && echo --no-flake)"}
+        nixos-rebuild ${lib.escapeShellArgs args} ${
+          if flake != null then
+            ''--flake "$flake"${lib.escapeShellArg flakeAttr}''
+          else
+            # nixos-rebuild deploys /etc/nixos/flake.nix if it exists.  Any
+            # nixos-rebuild doing so supports --no-flake.
+            "$(test -e /etc/nixos/flake.nix && echo --no-flake)"
+        }
       '');
 
   runShell = target: {
@@ -117,6 +136,11 @@ in
         then target'
         else lib.mkTarget buildTarget;
     target' = lib.mkTarget target;
+    # A host as nixos-rebuild takes it.  Without a user, ssh decides.
+    userHost = target:
+      lib.optionalString (target.user != null && target.user != "")
+        "${target.user}@" +
+      target.host;
     # The source's generated flake, if it draws inputs from other sources.
     flake' = let
       name = lib.head (lib.splitString "#" flake);
@@ -140,8 +164,8 @@ in
         ] ++ lib.optionals crossDeploy [
           "--no-build-nix"
         ] ++ lib.optionals (buildTarget' != target') [
-          "--build-host" "${buildTarget'.user}@${buildTarget'.host}"
-          "--target-host" "${target'.user}@${target'.host}"
+          "--build-host" (userHost buildTarget')
+          "--target-host" (userHost target')
         ] ++ lib.optionals (buildTarget' != target' && target'.sudo) [
           # nixos-rebuild runs on the target itself via sudo otherwise.
           "--use-remote-sudo"
