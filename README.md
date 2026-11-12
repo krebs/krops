@@ -592,6 +592,7 @@ The tests require KVM and nixpkgs with `pkgs.testers.runNixOSTest`
 ```sh
 nix-build tests            # all tests
 nix-build tests -A flake   # the test for one source type
+nix-build tests -A jq      # populate's jq programs for flakes, without VMs
 ```
 
 
