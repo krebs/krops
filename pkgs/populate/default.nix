@@ -169,6 +169,44 @@ let
       fi
     '';
 
+  # Removes entries of the target directory that aren't sources, garbage
+  # collector roots of flake inputs of sources that aren't flake or
+  # flake-input sources, and uploads left behind by interrupted runs.
+  prune' = target: sources: let
+    pattern = names: concatMapStringsSep "|" quote names;
+    flakeNames = attrNames (filterAttrs
+      (_: source: elem source.type [ "flake" "flake-input" ])
+      sources);
+  in runShell target /* sh */ ''
+    set -efu
+    cd ${quote target.path}
+    ls -A | while read -r name; do
+      case $name in
+        ${pattern (attrNames sources ++ [ ".populate" ])}) ;;
+        *)
+          >&2 printf 'pruning %s\n' ${quote target.path}/"$name"
+          rm -fR ./"$name"
+          ;;
+      esac
+    done
+    roots=.populate/flake-inputs
+    if test -d "$roots"; then
+      ls -A "$roots" | while read -r name; do
+        case $name in
+          ${optionalString (flakeNames != []) "${pattern flakeNames}) ;;"}
+          *) rm -fR "$roots"/"$name" ;;
+        esac
+      done
+      if test -z "$(ls -A "$roots")"; then
+        rmdir "$roots"
+      fi
+    fi
+    if test -e .populate/flake-uploads; then
+      chmod -R u+w .populate/flake-uploads
+      rm -fR .populate/flake-uploads
+    fi
+  '';
+
   pop.derivation = target: source: runShell target /* sh */ ''
     nix-build -E ${quote source.text} -o ${quote target.path} >&2
   '';
@@ -761,7 +799,7 @@ let
 
 in
 
-{ backup ? false, force ? false, source, target }:
+{ backup ? false, force ? false, prune ? false, source, target }:
 writers.writeDash "populate.${target.host}" ''
   set -efu
 
@@ -776,6 +814,7 @@ writers.writeDash "populate.${target.host}" ''
   ${optionalString backup (do-backup { inherit target; })}
   ${concatStringsSep "\n" (mapAttrsToList (populate target) source)}
   ${flakes target source}
+  ${optionalString prune (prune' target source)}
 
   # Stop the ssh master, if any source started one.
   if ${ssh' target} -q -O check ${quote target.host} 2>/dev/null; then

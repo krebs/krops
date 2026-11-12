@@ -147,6 +147,15 @@ Create the sentinel file (`/var/src/.populate`) before syncing the new source.
 
 Specifies which `nixos-rebuild` operation to perform.
 
+### `prune` (optional, defaults to false)
+
+Remove everything from the target directory that isn't a source, except
+`.populate`, after syncing the sources.  This also removes the garbage
+collector roots of the inputs of former `flake` and `flake-input` sources in
+`.populate/flake-inputs/<name>`, so the garbage collector can collect what
+they delivered.  Don't use it if the target directory contains anything else
+worth keeping, or if several deployments with different sources share it.
+
 ### `useNixOutputMonitor` (optional, defaults to `"opportunistic"`)
 
 Specifies when to pipe `nixos-rebuild`'s output to
@@ -190,6 +199,10 @@ below `/var/src`, and executes `NIX_PATH=/var/src nix-build -A system '<nixpkgs/
 
 [see `writeDeploy`](#writeDeploy)
 
+### `prune` (optional, defaults to false)
+
+[see `writeDeploy`](#writeDeploy)
+
 ### `trace` (optional, defaults to false)
 
 run nix-build with `--show-trace`
@@ -224,6 +237,10 @@ pkgs.krops.writeCommand "deploy-with-swap" {
 [see `writeDeploy`](#writeDeploy)
 
 ### `force` (optional, defaults to false)
+
+[see `writeDeploy`](#writeDeploy)
+
+### `prune` (optional, defaults to false)
 
 [see `writeDeploy`](#writeDeploy)
 

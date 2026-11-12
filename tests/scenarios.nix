@@ -64,10 +64,10 @@ let
     path = "/var/krops/${name}";
     target = targets.${targetKind} path;
     vars = "T=${path}\n";
-    phase = { sources, expect ? "success", check ? "", mutate ? null }: let
+    phase = { sources, prune ? false, expect ? "success", check ? "", mutate ? null }: let
       command = populate {
         source = krops.evalSource [ sources ];
-        inherit target;
+        inherit prune target;
         force = true;
       };
       evaluated = builtins.tryEval (builtins.seq (toString command) true);
@@ -480,6 +480,55 @@ in {
         }
       ];
     })
+    # Pruning removes everything sources don't deliver anymore, including
+    # garbage collector roots, and keeps everything else.
+    (s "prune" (let
+      sources = {
+        a.file = "/fixtures/alt";
+        b.flake = { flake = "/fixtures/top"; inherit fetchOnTarget; };
+        c.flake-input = { flake = "/fixtures/top"; name = "dep"; inherit fetchOnTarget; };
+        d.symlink = "a";
+      };
+    in {
+      prepare = ''
+        mkdir -p "$T"
+        echo other > "$T"/other
+      '';
+      phases = [
+        {
+          inherit sources;
+          check = ''
+            test -e "$T"/.populate/flake-inputs/b || fail "roots of b missing"
+            test -e "$T"/.populate/flake-inputs/c || fail "roots of c missing"
+          '';
+        }
+        {
+          # Without pruning, nothing gets removed.
+          sources = { inherit (sources) a; };
+          check = ''
+            for name in b c d other .populate/flake-inputs/b .populate/flake-inputs/c; do
+              test -e "$T"/$name || fail "$name removed"
+            done
+          '';
+        }
+        {
+          # b changes its type, so its roots go, while b stays.
+          sources = { inherit (sources) a; b.symlink = "a"; };
+          prune = true;
+          check = ''
+            test -e "$T"/a/flake.nix || fail "a removed"
+            expect_eq b "$(readlink "$T"/b)" a
+            test -d "$T"/.populate || fail ".populate removed"
+            for name in c d other .populate/flake-inputs; do
+              test ! -e "$T"/$name || fail "$name not pruned"
+            done
+            if nix-store --gc --print-roots 2>/dev/null | grep -F "$T/"; then
+              fail "garbage collector roots remain"
+            fi
+          '';
+        }
+      ];
+    }))
     (s "cycle" {
       phases = [{
         sources = {

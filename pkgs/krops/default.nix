@@ -80,6 +80,7 @@ in
     backup ? false,
     force ? false,
     allocateTTY ? false,
+    prune ? false,
     source,
     target
   }: let
@@ -87,7 +88,7 @@ in
   in
     writers.writeDash name ''
       set -efu
-      ${populate { inherit backup force source; target = target'; }}
+      ${populate { inherit backup force prune source; target = target'; }}
       ${runShell target' { inherit allocateTTY; } (command target'.path)}
     '';
 
@@ -99,6 +100,7 @@ in
     flake ? null,
     force ? false,
     operation ? "switch",
+    prune ? false,
     source,
     target,
     useNixOutputMonitor ? "opportunistic"
@@ -124,8 +126,8 @@ in
       writers.writeDash name ''
         set -efu
         ${lib.optionalString (buildTarget' != target')
-          (populate { inherit backup force source; target = buildTarget'; })}
-        ${populate { inherit backup force source; target = target'; }}
+          (populate { inherit backup force prune source; target = buildTarget'; })}
+        ${populate { inherit backup force prune source; target = target'; }}
         ${rebuild { flake = flake'; inherit useNixOutputMonitor; } ([
           operation
         ] ++ lib.optionals crossDeploy [
@@ -142,6 +144,7 @@ in
   writeTest = name: {
     backup ? false,
     force ? false,
+    prune ? false,
     source,
     target,
     trace ? false
@@ -151,7 +154,7 @@ in
     assert lib.isLocalTarget target';
     writers.writeDash name ''
       set -efu
-      ${populate { inherit backup force source; target = target'; }} >&2
+      ${populate { inherit backup force prune source; target = target'; }} >&2
       NIX_PATH=${lib.escapeShellArg target'.path} \
       ${nix}/bin/nix-build \
           -A system \
