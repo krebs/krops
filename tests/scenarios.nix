@@ -945,6 +945,17 @@ assert !(krops.isLocalTarget (targets.remote "/"));
         }
       ];
     })
+    (s "source-name" {
+      phases = twice {
+        sources = {
+          "alt-1.0".file = "/fixtures/alt";
+          x.file = { path = "/fixtures/filesrc"; inputs.dep.follows = "alt-1.0"; };
+        };
+        check = ''
+          expect_eq msg "$(nix_eval_online "$T"/.populate/flakes/x#msg)" top:alt,sub
+        '';
+      };
+    })
   ] ++ lib.optional (targetKind == "local")
     # The target has the path the input is locked to.
     (s "uselocal" {

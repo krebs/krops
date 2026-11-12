@@ -57,6 +57,13 @@ let
     flakesDir = "${target.path}/.populate/flakes";
     generated = filterAttrs (_: source: flakeFollows source != []) sources;
     names = attrNames generated;
+    # Source names become input names in generated flakes, where Nix accepts
+    # fewer names than populate.  Others get replaced by one derived from
+    # them.
+    inputName = name:
+      if builtins.match "[a-zA-Z][a-zA-Z0-9_-]*" name != null && name != "self"
+        then name
+        else "source-${substring 0 16 (builtins.hashString "sha256" name)}";
     drawnFrom = name: map (x: x.source) (flakeFollows generated.${name});
     sorted = toposort (a: b: elem a (drawnFrom b)) names;
     # Generated flakes refer to each other's generated flakes, so they don't
@@ -88,12 +95,12 @@ let
           else (findFirst (y: y.path == parent) null follows).source;
         rest = if parent == null then x.path else drop (length parent) x.path;
       in
-        "inputs.${toJSON base}" +
+        "inputs.${toJSON (inputName base)}" +
         # A source with a generated flake has itself as input therein.
         optionalString (parent != null && generated ? ${base})
-          ".inputs.${toJSON base}" +
+          ".inputs.${toJSON (inputName base)}" +
         concatMapStrings (name: ".inputs.${toJSON name}") rest +
-        ".follows = ${toJSON x.source};";
+        ".follows = ${toJSON (inputName x.source)};";
     in /* sh */ ''
       (
         url=$(flake_url ${quote name})
@@ -105,19 +112,19 @@ let
         cd ${quote "${flakesDir}/${name}"}
         {
           echo '{'
-          printf '  inputs.%s.url = "%s";\n' ${quote (toJSON name)} "$url"
+          printf '  inputs.%s.url = "%s";\n' ${quote (toJSON (inputName name))} "$url"
           ${concatImapStrings (i: source: /* sh */ ''
-            printf '  inputs.%s.url = "%s";\n' ${quote (toJSON source)} "$url${toString i}"
+            printf '  inputs.%s.url = "%s";\n' ${quote (toJSON (inputName source))} "$url${toString i}"
             ${optionalString (!generated ? ${source}) /* sh */ ''
               if ! test -e "$(readlink -f ${quote "${target.path}/${source}"})"/flake.nix; then
-                printf '  inputs.%s.flake = false;\n' ${quote (toJSON source)}
+                printf '  inputs.%s.flake = false;\n' ${quote (toJSON (inputName source))}
               fi
             ''}
           '') drawn}
           ${concatMapStrings (x: /* sh */ ''
             printf '  %s\n' ${quote (override x)}
           '') follows}
-          printf '  outputs = inputs: inputs.%s;\n' ${quote (toJSON name)}
+          printf '  outputs = inputs: inputs.%s;\n' ${quote (toJSON (inputName name))}
           echo '}'
         } > flake.nix
         # Not just ., which Nix takes for the enclosing Git work tree, if any.
