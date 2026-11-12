@@ -753,6 +753,8 @@ let
     if test -d "$source_path"; then
       source_path=$source_path/
     fi
+    # Each item gets logged with what changed about it, and its size, as
+    # transferred and in total.
     ${rsync}/bin/rsync \
         ${optionalString config.useChecksum /* sh */ "--checksum"} \
         ${optionalString target.sudo /* sh */ "--rsync-path=\"sudo rsync\""} \
@@ -763,6 +765,8 @@ let
           (filter: /* sh */ "--${filter.type} ${quote filter.pattern}")
           config.filters} \
         -e ${quote (ssh' target)} \
+        --itemize-changes \
+        --out-format=${quote "%i %n%L %'''b/%'''l"} \
         --info=backup,del,copy,misc,mount,name,nonreg,remove,skip,symsafe \
         ${optionalString (config.filterFiles or true) "-F"} \
         -rlptD \
