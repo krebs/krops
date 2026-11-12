@@ -53,6 +53,40 @@ in
 ```
 
 and run `$(nix-build --no-out-link krops.nix)` to deploy the target machine.
+
+
+## Using krops from a flake
+
+krops' flake provides `populate`, `writeDeploy`, and the other functions
+described below as `lib.<system>`, and its `lib` directory provides
+`evalSource` and `mkTarget`:
+
+```nix
+{
+  inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+  inputs.krops.url = "git+https://cgit.krebsco.de/krops";
+  inputs.krops.inputs.nixpkgs.follows = "nixpkgs";
+
+  outputs = { self, krops, ... }: let
+    system = "x86_64-linux";
+    lib = import "${krops}/lib";
+  in {
+    apps.${system}.deploy = {
+      type = "app";
+      program = toString (krops.lib.${system}.writeDeploy "deploy" {
+        source = lib.evalSource [{
+          nixos-config.file = toString ./configuration.nix;
+          nixpkgs.flake-input = { flake = toString self; name = "nixpkgs"; };
+        }];
+        target = "root@YOUR_IP_ADDRESS_OR_HOST_NAME_HERE";
+      });
+    };
+  };
+}
+```
+
+krops evaluates `<nixpkgs/lib>`, environment variables, and `/etc/hostname`,
+which pure evaluation doesn't allow, so deploy with `nix run --impure .#deploy`.
 krops exports some funtions under `krops.` namely:
 
 ## writeDeploy
