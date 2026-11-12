@@ -956,6 +956,23 @@ assert !(krops.isLocalTarget (targets.remote "/"));
         '';
       };
     })
+    # An upload an interrupted run left behind.
+    (s "upload-leftover" {
+      phases = [
+        {
+          sources.x.flake = { flake = "/fixtures/top"; fetchOnTarget = true; };
+          check = checkFlake { attr = "msg"; expected = "top:dep+inner,sub"; };
+          mutate = ''
+            mkdir -p "$T"/.populate/flake-uploads/x/tree
+            echo half > "$T"/.populate/flake-uploads/x/tree/half
+          '';
+        }
+        {
+          sources.x.flake = { flake = "/fixtures/top"; fetchOnTarget = true; };
+          check = checkFlake { attr = "msg"; expected = "top:dep+inner,sub"; };
+        }
+      ];
+    })
   ] ++ lib.optional (targetKind == "local")
     # The target has the path the input is locked to.
     (s "uselocal" {

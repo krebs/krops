@@ -427,6 +427,8 @@ let
       fi
 
       ${sentinelDirectory sentinel}
+      # Left behind by an interrupted run, or not needed anymore.
+      ${removeUpload}
       mkdir -p ${quote inputsRoots}
       roots=
       while read -r path; do
@@ -450,6 +452,9 @@ let
       # An input without own inputs leaves the directory empty.
       if test -z "$roots"; then
         rmdir ${quote inputsRoots}
+        if test -z "$(ls -A ${quote (dirOf inputsRoots)})"; then
+          rmdir ${quote (dirOf inputsRoots)}
+        fi
       fi
     '';
     # Reads the selection, as selected produces it, and the store path of the
