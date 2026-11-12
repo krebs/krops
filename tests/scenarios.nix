@@ -418,6 +418,7 @@ in {
   # writeDeploy's arguments to nixos-rebuild, which a stand-in records.
   deploy = matrix "deploy" {
     flake = [ false true ];
+    etcFlake = [ false true ];
     buildTarget = [ false true ];
   } (flags: ctx: let
     target = targets.${ctx.targetKind} ctx.path;
@@ -429,13 +430,21 @@ in {
         "--target-host" "${target.user}@${target.host}"
       ]
       ++ optional (flags.buildTarget && target.sudo) "--use-remote-sudo"
-      ++ optionals flags.flake [ "--flake" "${build.path}/x" ];
+      ++ optionals flags.flake [ "--flake" "${build.path}/x" ]
+      ++ optional (flags.etcFlake && !flags.flake) "--no-flake";
   in
     # The local target can't have another build target.
     if flags.buildTarget && ctx.targetKind == "local" then null else {
       node = if flags.buildTarget then "deployer" else null;
+      # Each scenario creates or removes /etc/nixos/flake.nix.
       prepare = ''
         rm -f /tmp/nixos-rebuild.log
+        ${if flags.etcFlake then ''
+          mkdir -p /etc/nixos
+          touch /etc/nixos/flake.nix
+        '' else ''
+          rm -f /etc/nixos/flake.nix
+        ''}
       '';
       phases = twice {
         sources.x =

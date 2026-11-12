@@ -137,7 +137,9 @@ draws inputs from other sources, its generated flake gets deployed, see
 [Flake inputs from sources](#flake-inputs-from-sources).  This makes
 `nixos-rebuild` use `--flake`, and requires Nix with flake support (Nix 2.4 or
 later) on the build target.  Without the name of the NixOS configuration,
-`nixos-rebuild` uses the host name of the build target.
+`nixos-rebuild` uses the host name of the build target.  Without `flake`,
+`nixos-rebuild` gets `--no-flake` if `/etc/nixos/flake.nix` exists on the
+build target, so it deploys `NIX_PATH` instead of that flake.
 
 ### `force` (optional, defaults to false)
 

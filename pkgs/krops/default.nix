@@ -16,7 +16,10 @@ in
         NIX_PATH=${lib.escapeShellArg target.path} \
         nixos-rebuild ${lib.escapeShellArgs (args ++ lib.optionals (flake != null) [
           "--flake" "${target.path}/${flake}"
-        ])}
+        ])} ${lib.optionalString (flake == null)
+          # nixos-rebuild deploys /etc/nixos/flake.nix if it exists.  Any
+          # nixos-rebuild doing so supports --no-flake.
+          "$(test -e /etc/nixos/flake.nix && echo --no-flake)"}
       '');
 
   runShell = target: {
