@@ -316,6 +316,12 @@ everything else.  It doesn't change or remove anything outside:
   fails, telling what's wrong, unless the source's `reclone` is set.  Git
   runs no hooks.
 
+* A file in the target directory that has other hard links, e.g. one in
+  `/etc/nixos`, gets replaced by a copy of its own before rsync syncs it, so
+  the other ones keep their mode and time.  Populate writes its own files,
+  and replaces lock files it rewrites, by renaming new files into place, and
+  only makes directories writable that it removes.
+
 * Populate keeps its state in the sentinel, `.populate`, which becomes a
   directory once there is state to keep.  Populating fails if the sentinel,
   or a directory populate needs therein, is a symlink.

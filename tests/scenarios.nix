@@ -2013,6 +2013,102 @@ assert !(krops.isLocalTarget (targets.remote "/"));
         }
       ];
     }))
+    # A file in populate's state replaced by a symlink to a file outside.
+    (s "state-key" (let
+      sources.x.flake-input = {
+        url = "/fixtures/top"; name = "dep"; inherit fetchOnTarget;
+        patches = hello;
+      };
+    in {
+      isolate = true;
+      phases = [
+        {
+          inherit sources;
+          mutate = ''
+            rm "$T"/.populate/derived/x/key
+            ln -s ${outside}/file "$T"/.populate/derived/x/key
+          '';
+        }
+        {
+          inherit sources;
+          check = checkFlake { attr = "greeting"; expected = "hello+inner"; };
+        }
+      ];
+    }))
+    # Stale state that contains a hard link to a read-only file outside,
+    # whose mode stays.
+    (s "state-hard-link" (let
+      sources.x.flake-input = {
+        url = "/fixtures/top"; name = "dep"; inherit fetchOnTarget;
+        patches = hello;
+      };
+    in {
+      isolate = true;
+      phases = [
+        {
+          inherit sources;
+          mutate = ''
+            mkdir -p "$T"/.populate/derived/gone "$T"/.populate/derived/x/work
+            ln ${outside}/dir/sub/file "$T"/.populate/derived/gone/file
+            ln ${outside}/dir/sub/file "$T"/.populate/derived/x/work/file
+          '';
+        }
+        {
+          inherit sources;
+          check = ''
+            test ! -e "$T"/.populate/derived/gone || fail "gone remains"
+          '';
+        }
+      ];
+    }))
+    # The source contains flake.lock.populate and a file like the temporary
+    # copy of the lock file, symlinks to a file outside.
+    (s "lock-temporary-link" {
+      isolate = true;
+      prepareDeployer = ''
+        rm -fR /var/krops-src/lock-temporary-link
+        mkdir -p /var/krops-src
+        cp -R /fixtures/filesrc /var/krops-src/lock-temporary-link
+        ln -s ${outside}/file /var/krops-src/lock-temporary-link/flake.lock.populate
+        ln -s ${outside}/file /var/krops-src/lock-temporary-link/.flake.lock.XXXXXX
+      '';
+      phases = twice {
+        sources = alt // {
+          x.file = {
+            path = "/var/krops-src/lock-temporary-link";
+            inputs.dep.follows = "alt";
+          };
+        };
+        check = ''
+          expect_eq msg "$(nix_eval_online path:"$T"/x#msg)" top:alt,sub
+        '';
+      };
+    })
+    # A file in the target directory is a hard link to a read-only file
+    # outside with the same contents, which rsync takes for unchanged, and
+    # would fix the mode and time of in place.
+    (s "rsync-hard-link" {
+      isolate = true;
+      prepareDeployer = ''
+        rm -fR /var/krops-src/rsync-hard-link
+        mkdir -p /var/krops-src/rsync-hard-link
+        echo outside > /var/krops-src/rsync-hard-link/file
+      '';
+      prepare = ''
+        mkdir -p "$T"/x
+        ln ${outside}/dir/sub/file "$T"/x/file
+      '';
+      phases = twice {
+        sources.x.file = {
+          path = "/var/krops-src/rsync-hard-link";
+          useChecksum = true;
+        };
+        check = ''
+          expect_eq file "$(cat "$T"/x/file)" outside
+          expect_eq links "$(stat -c %h "$T"/x/file)" 1
+        '';
+      };
+    })
     (lib.optionals (targetKind == "local") [
       # Rewriting a lock file changes no other hard link to it.  The lock
       # file is like the source's, with its modification time, so rsync

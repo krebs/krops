@@ -65,12 +65,14 @@ let
 
   # Shell code that removes what's at path, a shell word, with everything
   # below it, also what isn't writable.  A symlink gets removed itself,
-  # instead of followed.
+  # instead of followed.  Only directories get made writable, which is what
+  # removing what's in them needs: a file may be a hard link to one
+  # elsewhere, which shares its mode.
   removeTree = path: /* sh */ ''
     if test -L ${path}; then
       rm ${path}
     elif test -e ${path}; then
-      chmod -R u+w ${path}
+      find ${path} -type d -exec chmod u+w {} +
       rm -fR ${path}
     fi
   '';
@@ -79,8 +81,7 @@ let
   # that aren't named names.  find, unlike a loop reading names, copes with
   # every name, e.g. ones that end in blanks or contain newlines.  Entries of
   # populate's own state get removed like removeTree does.  Entries of the
-  # target directory get removed without making them writable first, which
-  # would change files elsewhere that are hard links to files therein; for
+  # target directory get removed without making anything writable first; for
   # those, log is a shell word for the directory's name in the line that
   # gets printed for each entry.
   removeOthers = { dir, names, log ? null }: /* sh */ ''
@@ -101,7 +102,8 @@ let
               if test -L "$path"; then
                 rm "$path"
               else
-                chmod -R u+w "$path"
+                # Escaped, or the outer find takes the braces for its own.
+                find "$path" -type d -exec chmod u+w {\} +
                 rm -fR "$path"
               fi
             ''}
@@ -124,7 +126,8 @@ let
   # it points into the store, like the links populate puts there itself.
   removeForeignLink = path: /* sh */ ''
     if test -L ${quote path}; then
-      case $(readlink ${quote path}) in
+      # Resolved, so a link like /nix/store/../.. doesn't count.
+      case $(readlink -f ${quote path}) in
         /nix/store/*) ;;
         *)
           ${removeLink path}
@@ -217,7 +220,9 @@ let
     fi
     ${optionalString force /* sh */ ''
       mkdir -vp ${quote (dirOf sentinelFile)} >&2
-      touch ${quote sentinelFile}
+      if ! test -e ${quote sentinelFile}; then
+        touch ${quote sentinelFile}
+      fi
     ''}
     if ! test -e ${quote sentinelFile}; then
       >&2 printf 'error: missing sentinel file: %s\n' ${quote (
@@ -371,6 +376,13 @@ let
       removeWork = removeTree (quote "${dir}/work");
     in /* sh */ ''
       (
+        # Writes the key $1 to a new file, which then replaces the key, so
+        # nothing at its place gets written through, e.g. a symlink.
+        write_key() {
+          key_file=$(mktemp ${quote "${dir}/key"}.XXXXXX)
+          printf '%s\n' "$1" > "$key_file"
+          mv -f "$key_file" ${quote "${dir}/key"}
+        }
         original=$(readlink -f ${quote "${dir}/original"})
         path=$(printf '%s\n' "$original" | cut -d/ -f1-4)
         subdir=''${original#"$path"}
@@ -417,7 +429,7 @@ let
             ${removeForeignLink targetPath}
             rm -fR ${quote targetPath}
             mv ${quote "${dir}/work"} ${quote targetPath}
-            printf '%s\n' "$key" > ${quote "${dir}/key"}
+            write_key "$key"
           fi
           ${optionalString rewriteLock /* sh */ ''
             ${overrideArgs name}
@@ -450,7 +462,7 @@ let
             ${removeWork}
             nix-store --realise "$result" \
                 --add-root ${quote "${dir}/result"} --indirect >/dev/null
-            printf '%s\n' "$key" > ${quote "${dir}/key"}
+            write_key "$key"
           fi
           ${makeRoomForLink targetPath}
           # .populate/derived/<name>/result roots the store path.
@@ -530,10 +542,13 @@ let
         # a hard link to the lock file, e.g. in a backup, or what it is a
         # symlink to.  So the lock file of the flake in the directory $1
         # gets replaced by a copy first.
+        # The copy goes to a new file, so nothing that's there already
+        # gets written through.
         own_lock() {
           if test -e "$1"/flake.lock; then
-            cp -p "$1"/flake.lock "$1"/flake.lock.populate
-            mv -f "$1"/flake.lock.populate "$1"/flake.lock
+            own_lock_copy=$(mktemp "$1"/.flake.lock.XXXXXX)
+            cp -p "$1"/flake.lock "$own_lock_copy"
+            mv -f "$own_lock_copy" "$1"/flake.lock
           fi
         }
 
@@ -1259,8 +1274,22 @@ let
 
   rsync' = target: config: sourcePath: /* sh */ ''
     # rsync writes through a symlink at the target path, e.g. one a symlink or
-    # flake source left there, into what it points to.
-    ${runShell target (removeLink target.path)}
+    # flake source left there, into what it points to.  And rsync fixes the
+    # mode and time of a file it takes for unchanged in place, which changes
+    # every hard link to it, e.g. one elsewhere, or a backup's.  So each file
+    # with other hard links gets replaced by a copy of its own first.
+    ${runShell target /* sh */ ''
+      ${removeLink target.path}
+      if test -d ${quote target.path}; then
+        find ${quote target.path} -type f -links +1 -exec sh -c '
+          for file; do
+            copy=$(mktemp "$file.XXXXXX")
+            cp -p "$file" "$copy"
+            mv -f "$copy" "$file"
+          done
+        ' sh {} +
+      fi
+    ''}
     source_path=${sourcePath}
     if test -d "$source_path"; then
       source_path=$source_path/
