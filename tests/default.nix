@@ -7,8 +7,10 @@
 # -A exhaustive, or one with, e.g., nix-build tests -A exhaustive.flake.
 # The smoke test runs a few scenarios covering each source type and each kind
 # of target in a single VM test, for checking changes quickly; build it with
-# nix-build tests -A smoke.
-{ pkgs ? import ../pkgs {} }:
+# nix-build tests -A smoke.  nix-build tests -A only --argstr only REGEX runs
+# the scenarios whose names match the regular expression REGEX in a single
+# VM test, e.g. --argstr only 'lock-hooks-.*'.
+{ pkgs ? import ../pkgs {}, only ? null }:
 
 let
   # HEAD of /fixtures/gitsrc, which fixtures.sh creates deterministically,
@@ -72,13 +74,25 @@ let
     "deploy-local-buildTarget0-etcFlake0-flakefile"
     "deploy-sudo-allocateTTY"
   ];
+  allScenarios = pkgs.lib.concatLists (builtins.attrValues scenarios);
   smokeScenarios = let
-    all = pkgs.lib.concatLists (builtins.attrValues scenarios);
-    selected = builtins.filter (scenario: builtins.elem scenario.name smokeNames) all;
+    selected = builtins.filter (scenario: builtins.elem scenario.name smokeNames) allScenarios;
     missing = pkgs.lib.subtractLists (map (scenario: scenario.name) selected) smokeNames;
   in
     if missing != [] then
       throw "tests: smoke test names missing scenarios: ${toString missing}"
+    else
+      selected;
+  # The scenarios whose names match the regular expression only.
+  onlyScenarios = let
+    selected = builtins.filter
+      (scenario: builtins.match only scenario.name != null)
+      allScenarios;
+  in
+    if only == null then
+      throw "tests: -A only needs --argstr only REGEX"
+    else if selected == [] then
+      throw "tests: no scenario's name matches ${builtins.toJSON only}"
     else
       selected;
 in
@@ -89,6 +103,11 @@ in
       inherit pkgs gitHead;
       name = "smoke";
       scenarios = smokeScenarios;
+    };
+    only.only = import ./vm.nix {
+      inherit pkgs gitHead;
+      name = "only";
+      scenarios = onlyScenarios;
     };
   }
   # An attribute set without recurseForDerivations, so nix-build tests

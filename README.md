@@ -765,6 +765,7 @@ nix-build tests -A exhaustive     # all exhaustive tests
 nix-build tests -A exhaustive.git # the remaining combinations of one test
 nix-build tests -A rsync-3-5-0    # the scenarios depending on rsync's version
 nix-build tests -A smoke          # a few scenarios of each kind, in one VM
+nix-build tests -A only --argstr only 'lock-hooks-.*'  # scenarios by name
 ```
 
 Populate is a program in Rust, in `pkgs/populate`, which
