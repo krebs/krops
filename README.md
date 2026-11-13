@@ -704,9 +704,9 @@ a `flake` or `flake-input` source, and neither does what they pin.
 Generated flakes and copies get removed once their sources no longer need
 them.  This requires Nix with flake support (Nix 2.4 or later) on the
 target.  Populating fails if a source that draws inputs from other sources
-contains no `flake.nix`.  Sources that inputs get drawn from don't need to be
-flakes, as long as the inputs drawing from them are declared with
-`flake = false`.
+contains no `flake.nix`, or if its flake has no such input, before anything
+changes.  Sources that inputs get drawn from don't need to be flakes, as long
+as the inputs drawing from them are declared with `flake = false`.
 
 
 ## Tests

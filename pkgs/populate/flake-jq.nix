@@ -2,6 +2,29 @@
 # their own, so tests can run them: jq programs, which run on the deploying
 # machine, and a Nix function for the target, which may lack jq.
 rec {
+  # Nix function returning 1 if the lock file locks has an input at path, a
+  # list of input names, resolving inputs that follow others, and else 0.
+  lockHasInput = /* nix */ ''
+    locks: path: let
+      nodes = locks.nodes;
+      input = key: name: (nodes.''${key}.inputs or {}).''${name} or null;
+      # The node an input refers to, following follows from the root.
+      node = ref:
+        if ref == null then null
+        else if builtins.isList ref then
+          builtins.foldl'
+            (key: name: if key == null then null else node (input key name))
+            locks.root
+            ref
+        else ref;
+      has = key: path:
+        if path == [] then true
+        else let next = node (input key (builtins.head path)); in
+          next != null && has next (builtins.tail path);
+    in
+      if has locks.root path then "1" else "0"
+  '';
+
   # Nix function returning the subdirectory containing the flake that nix
   # flake metadata describes, like subdirOf does in jq.
   metadataSubdir = /* nix */ ''

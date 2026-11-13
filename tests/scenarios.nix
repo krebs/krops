@@ -1445,6 +1445,30 @@ assert !(krops.isLocalTarget (targets.remote "/"));
         '';
       }];
     })
+    # Misspelt input names draw nothing, so they fail before anything
+    # changes: of the source's flake, and below an input drawn from a source.
+    (modes "inputs-typo" ({ draw, ... }: {
+      phases = [
+        {
+          sources = alt // {
+            x.flake-input = {
+              url = "/fixtures/top"; name = "dep"; inherit fetchOnTarget;
+            } // draw { innr.follows = "alt"; };
+          };
+          expect.fail = "error: source x draws input innr from source alt, but its flake has no input innr";
+        }
+        {
+          sources = {
+            x.flake = {
+              url = "/fixtures/top"; inherit fetchOnTarget;
+            } // draw { dep = { follows = "b"; inputs.qq.follows = "c2"; }; };
+            b.file = "/fixtures/two";
+            c2.file = "/fixtures/c2";
+          };
+          expect.fail = "error: source x draws input dep/qq from source c2, but the flake of source b has no input qq";
+        }
+      ];
+    }))
     # A signal ending populate leaves neither the ssh master nor the
     # temporary directory.
     (s "interrupt" {

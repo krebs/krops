@@ -267,6 +267,7 @@ let
   # in the source, with those inputs drawn from the other sources.  Lock files
   # get rewritten or generated on every run, so they match the sources.
   flakes = target: sources: let
+    inherit (import ./flake-jq.nix) lockHasInput;
     sentinel = "${target.path}/.populate";
     flakesDir = "${sentinel}/flakes";
     derivedDir = "${sentinel}/derived";
@@ -325,6 +326,21 @@ let
       else
         if parents == [] then path
         else parent ++ rest;
+    # The inputs that drawing the input at path of the flake in the source
+    # named name needs to exist, as { name, path } of the source whose flake
+    # has the input at path.  Like drawnPath, the part below an input drawn
+    # from a source is the flake of that source's.
+    inputChecks = name: path: let
+      follows = flakeFollows sources.${name};
+      parents = filter
+        (prefix: any (x: x.path == prefix) follows)
+        (map (n: take n path) (range 1 (length path - 1)));
+      parent = last parents;
+      from = (findFirst (x: x.path == parent) null follows).source;
+    in
+      if parents == [] then [ { inherit name path; } ]
+      else [ { inherit name; path = parent; } ]
+        ++ inputChecks from (drop (length parent) path);
     # Sets the positional parameters to nix flake lock's arguments for
     # drawing the inputs of the flake in source name from other sources.
     overrideArgs = name: /* sh */ ''
@@ -586,6 +602,65 @@ let
           >&2 printf 'error: source %s draws flake inputs from other sources, but contains no flake.nix\n' $missing
           exit 1
         fi
+
+        # Nix ignores inputs drawn that the flake doesn't have, with a
+        # warning, so a misspelt input name would draw nothing.  Prints the
+        # flake URL of the flake in the source named $1 as delivered.
+        own_flake_url() {
+          case " "${quote (toString (attrNames derived))}" " in
+            *" $1 "*)
+              printf 'path:%s' "$(url_path "$(readlink -f ${quote derivedDir}/"$1"/original)")"
+              ;;
+            *)
+              flake_url "$1"
+              ;;
+          esac
+        }
+        # The lock files of the flakes in the sources, as Nix locks them now,
+        # with an empty flake in place of each input drawn from a source,
+        # which may not be reachable, as the one the flake's lock file pins.
+        locks_dir=$(mktemp -d)
+        echo '{ outputs = _: {}; }' > "$locks_dir"/flake.nix
+        ${concatMapStrings (name: let
+          follows = flakeFollows sources.${name};
+        in /* sh */ ''
+          set --
+          ${concatMapStrings (x: /* sh */ ''
+            set -- "$@" --override-input ${quote (concatStringsSep "/" x.path)} "path:$locks_dir"
+          '') follows}
+          if ! nix flake metadata --json --no-write-lock-file "$@" \
+              "$(own_flake_url ${quote name})" > "$locks_dir"/${quote name}.json; then
+            >&2 printf 'error: source %s draws inputs from other sources, but its flake can'"'"'t be locked\n' \
+                ${quote name}
+            exit 1
+          fi
+        '') (unique (concatMap (name: concatMap (x: map (c: c.name) (inputChecks name x.path)) (flakeFollows sources.${name})) (attrNames drawing)))}
+        # Fails, naming the input, unless the flake in the source named $1
+        # has an input at the path $2, a JSON list of input names.  $3 is
+        # the source that the input $4 of the source $5 gets drawn from.
+        require_input() {
+          if ! test "$(
+            METADATA=$(cat "$locks_dir/$1.json") INPUT=$2 nix eval --impure --raw --expr ${quote ''
+              (${lockHasInput})
+                (builtins.fromJSON (builtins.getEnv "METADATA")).locks
+                (builtins.fromJSON (builtins.getEnv "INPUT"))
+            ''}
+          )" = 1; then
+            if test "$1" = "$5"; then
+              >&2 printf 'error: source %s draws input %s from source %s, but its flake has no input %s\n' \
+                  "$5" "$4" "$3" "$4"
+            else
+              >&2 printf 'error: source %s draws input %s from source %s, but the flake of source %s has no input %s\n' \
+                  "$5" "$4" "$3" "$1" "$(printf %s "$2" | tr -d '[]"' | tr , /)"
+            fi
+            exit 1
+          fi
+        }
+        ${concatMapStrings (name: concatMapStrings (x: concatMapStrings (c: /* sh */ ''
+          require_input ${quote c.name} ${quote (toJSON c.path)} \
+              ${quote x.source} ${quote (concatStringsSep "/" x.path)} ${quote name}
+        '') (inputChecks name x.path)) (flakeFollows sources.${name})) (attrNames drawing)}
+        rm -R "$locks_dir"
 
         ${optionalString (generated != {}) /* sh */ ''
           mkdir -p ${quote flakesDir}
