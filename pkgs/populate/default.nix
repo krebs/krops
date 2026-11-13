@@ -1398,6 +1398,10 @@ let
         --itemize-changes \
         --out-format=${quote "%i %n%L %'''b/%'''l"} \
         --info=backup,del,copy,misc,mount,name,nonreg,remove,skip,symsafe \
+        `# Nothing relies on the times of directories and symlinks, and` \
+        `# keeping them would log a line for each directory changed.` \
+        --omit-dir-times \
+        --omit-link-times \
         ${rsyncFilterArgs config} \
         -rlptD \
         ${optionalString config.deleteExcluded /* sh */ "--delete-excluded"} \
