@@ -333,10 +333,9 @@ everything else.  It doesn't change or remove anything outside:
   `git` source as well.
 
 * A `git` source only uses a work tree whose `.git` directory contains no
-  symlinks, no `commondir` file, no linked work trees, and no hooks, and
-  only the configuration that `git clone` and populate write, and in which
-  each `.git` of a submodule is a file naming a repository in
-  `.git/modules`.  Otherwise Git's
+  symlinks, no `commondir` file and no linked work trees, and only the
+  configuration that `git clone` and populate write, and in which each
+  `.git` of a submodule is a file naming a repository in `.git/modules`.  Otherwise Git's
   commands could change what's elsewhere, or run commands, so populating
   fails, telling what's wrong, unless the source's `reclone` is set.  Git
   runs no hooks.
@@ -725,9 +724,9 @@ automatically.
 
 Sources in a Git work tree are referred to as `git+file:` (with submodules if
 there are any), all other sources as `path:`, with symlinks resolved.  Nix
-runs Git in a `git+file:` flake, so that's only for work trees whose `.git`
-directory a `git` source would use, see
-[The target directory](#the-target-directory).  Lock
+runs Git in a `git+file:` flake, with its configuration and hooks, so
+that's only for work trees whose `.git` directory a `git` source would use,
+see [The target directory](#the-target-directory), and has no hooks.  Lock
 files get rewritten or generated on every run, so they match the sources.
 Copies of `flake` and `flake-input` sources get made again only if the
 delivered store path, the patches, or the sources they draw inputs from

@@ -244,10 +244,10 @@ ln -fnsT -- "$2" "$1"
 /// Defines git_problems PATH, which prints why populate can't use the .git
 /// directory of the Git work tree at PATH, or nothing.  A .git directory
 /// that git clone and populate made has no symlinks, no commondir file,
-/// which names another repository, no linked work trees, no hooks, and only
-/// the configuration they write: the repository's format, the remote,
-/// branches, and submodules, whose repositories have their work tree in the
-/// work tree.  And each .git below the work tree, which Git uses for a
+/// which names another repository, no linked work trees, and only the
+/// configuration they write: the repository's format, the remote, branches,
+/// and submodules, whose repositories have their work tree in the work
+/// tree.  Hooks don't matter: populate's Git doesn't run them.  And each .git below the work tree, which Git uses for a
 /// submodule there, is a file naming a repository in .git/modules.
 pub const GIT_PROBLEMS: &str = r#"
 git_problems() (
@@ -266,13 +266,6 @@ git_problems() (
   if test -e "$git_dir"/worktrees; then
     printf '%s has linked work trees' "$git_dir"
     exit
-  fi
-  if test -d "$git_dir"/hooks; then
-    hooks=$(find "$git_dir"/hooks -mindepth 1 ! -name '*.sample' | head -n 3 | paste -s -d ' ' -)
-    if test -n "$hooks"; then
-      printf '%s contains hooks: %s' "$git_dir" "$hooks"
-      exit
-    fi
   fi
   nested=$(
     find "$path" -path "$git_dir" -prune -o -name .git -exec sh -c '
@@ -813,9 +806,10 @@ use_state "$@"
     /// resolve PATH...: prints, for each PATH, what's there and where it
     /// resolves to, as two fields, each ending in a null byte.  The first
     /// holds d if PATH is a directory, g if it has a .git directory that
-    /// git_problems finds nothing wrong with, s if it has .gitmodules, and
-    /// f if it has flake.nix.  Nix runs Git in a git+file: flake, with the
-    /// repository's configuration and hooks, so it only gets such ones.
+    /// git_problems finds nothing wrong with, and that has no hooks, s if
+    /// it has .gitmodules, and f if it has flake.nix.  Nix runs Git in a
+    /// git+file: flake, with the repository's configuration and hooks, so
+    /// it only gets such ones.
     pub const RESOLVE: &str = r#"
 for path; do
   resolved=$(readlink -f "$path") || resolved=
@@ -823,7 +817,12 @@ for path; do
   if test -d "$path"; then flags=${flags}d; fi
   if ! test -L "$path"/.git && test -d "$path"/.git; then
     problems=$(git_problems "$path" 2>/dev/null) || problems=failed
-    if test -z "$problems"; then flags=${flags}g; fi
+    if test -d "$path"/.git/hooks; then
+      hooks=$(find "$path"/.git/hooks -mindepth 1 ! -name '*.sample' | head -n 1)
+    else
+      hooks=
+    fi
+    if test -z "$problems" && test -z "$hooks"; then flags=${flags}g; fi
   fi
   if test -e "$path"/.gitmodules; then flags=${flags}s; fi
   if test -e "$path"/flake.nix; then flags=${flags}f; fi
