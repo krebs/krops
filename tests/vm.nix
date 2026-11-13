@@ -178,6 +178,10 @@ in pkgs.testers.runNixOSTest {
                         raise Exception(
                             f"populate {i} doesn't fail with {phase['expect']!r}:\n{out}"
                         )
+                    elif phase["status"] is not None and status != phase["status"]:
+                        raise Exception(
+                            f"populate {i} exits with {status} instead of {phase['status']}:\n{out}"
+                        )
                     run(node, f"KROPS_TEST_GC=1 sh {phase['check']}")
                     if phase["checkDeployer"] is not None:
                         run(deployer, f"sh {phase['checkDeployer']}")

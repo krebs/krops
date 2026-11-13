@@ -110,7 +110,9 @@ let
     # arguments of env.  interrupt ends populate after that many seconds,
     # which it's expected not to finish before.  output lists what a
     # succeeding populate is expected to print, and unexpected what populate
-    # is expected not to print, succeeding or not.
+    # is expected not to print, succeeding or not.  expect.fail is what a
+    # failing populate is expected to print, and expect.status, if given,
+    # its exit status.
     phase = {
       sources, backup ? false, prune ? false, deploy ? null,
       targetPath ? path, env ? "", interrupt ? null, output ? [],
@@ -151,6 +153,7 @@ let
         populate = toString (command sources targetPath);
         inherit env interrupt output unexpected;
         expect = if expect == "success" then null else expect.fail;
+        status = if expect == "success" then null else expect.status or null;
         # No phase gets around checking the canaries.
         check = script (check + "\ncanary_check\n");
         mutate = script mutate;
@@ -1177,6 +1180,70 @@ assert !(krops.isLocalTarget (targets.remote "/"));
         expect.fail = "error: flake /fixtures/top has no input nope";
       }];
     })
+    # rsync's log gives sizes in units of 1024, as %'''l asks for.
+    (s "rsync-units" {
+      prepareDeployer = ''
+        rm -fR /tmp/rsync-units
+        mkdir /tmp/rsync-units
+        head -c 2048 /dev/zero > /tmp/rsync-units/f
+      '';
+      phases = [{
+        sources.x.file = "/tmp/rsync-units";
+        output = [ "/2.00K" ];
+      }];
+    })
+    # A pipe command without #!, which a shell runs as a script.
+    (s "pipe-script" {
+      prepareDeployer = ''
+        printf 'echo piped\n' > /tmp/pipe-script
+        chmod +x /tmp/pipe-script
+      '';
+      phases = [{
+        sources.x.pipe = "/tmp/pipe-script";
+        check = ''
+          expect_eq x "$(cat "$T"/x)" piped
+        '';
+      }];
+    })
+    # A pass source gets decrypted again only when the last commit of its
+    # passwords changes, which .pass_info records.
+    (s "pass-changes" (let
+      sources.x.pass = { dir = "/tmp/pass-changes"; name = "x"; };
+    in {
+      prepareDeployer = ''
+        rm -fR /tmp/pass-changes
+        cp -R /fixtures/pass-git /tmp/pass-changes
+      '';
+      phases = [
+        {
+          inherit sources;
+          check = ''
+            expect_eq a "$(cat "$T"/x/a)" secret-a
+          '';
+          mutate = ''
+            echo local-change > "$T"/x/a
+          '';
+        }
+        {
+          inherit sources;
+          check = ''
+            expect_eq a "$(cat "$T"/x/a)" local-change
+          '';
+          mutateDeployer = ''
+            export GIT_AUTHOR_NAME=krops GIT_AUTHOR_EMAIL=spam@krebsco.de
+            export GIT_COMMITTER_NAME=krops GIT_COMMITTER_EMAIL=spam@krebsco.de
+            printf 'secret-b\n' |
+              PASSWORD_STORE_DIR=/tmp/pass-changes pass insert -m -f x/a >/dev/null
+          '';
+        }
+        {
+          inherit sources;
+          check = ''
+            expect_eq a "$(cat "$T"/x/a)" secret-b
+          '';
+        }
+      ];
+    }))
     # An input locked to a path the target doesn't have.
     (s "gone" {
       phases = [{
@@ -2192,6 +2259,14 @@ assert !(krops.isLocalTarget (targets.remote "/"));
         }
       ];
     }))
+    # populate exits with the status of the command that failed, here git
+    # fetch's.
+    (s "git-status" {
+      phases = [{
+        sources.x.git = { url = gitUrl; ref = "nonexistent"; };
+        expect = { fail = "couldn't find remote ref"; status = 128; };
+      }];
+    })
     # A .git that a materialized flake got, and one that a file source
     # keeps, which Nix uses for the git+file: URL of the flake there: writing
     # its lock file, Nix runs Git, with that repository's configuration.
