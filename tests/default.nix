@@ -7,10 +7,8 @@
 # -A exhaustive, or one with, e.g., nix-build tests -A exhaustive.flake.
 # The smoke test runs a few scenarios covering each source type and each kind
 # of target in a single VM test, for checking changes quickly; build it with
-# nix-build tests -A smoke.  jq runs populate's jq programs for flakes without
-# VMs.  implementation selects populate's implementation, e.g. nix-build
-# tests --argstr implementation rust -A smoke.
-{ pkgs ? import ../pkgs {}, implementation ? "shell" }:
+# nix-build tests -A smoke.
+{ pkgs ? import ../pkgs {} }:
 
 let
   # HEAD of /fixtures/gitsrc, which fixtures.sh creates deterministically,
@@ -26,11 +24,11 @@ let
 
   # The scenarios, with populate using rsync.
   scenariosWith = rsync: let
-    populate = pkgs.populate.override { inherit implementation rsync; };
+    populate = pkgs.populate.override { inherit rsync; };
   in import ./scenarios.nix {
     inherit (pkgs) lib;
     krops = import ../lib;
-    inherit implementation populate;
+    inherit populate;
     inherit (pkgs.krops.override { inherit populate; }) writeDeploy;
     url = "http://deployer:8000";
     gitUrl = "git://deployer/gitsrc.git";
@@ -40,7 +38,6 @@ let
     rsyncVersion = rsync.version;
   };
   scenarios = scenariosWith pkgs.rsync;
-  flakeJq = import ../pkgs/populate/flake-jq.nix;
   # VM tests of those of the groups of scenarios that are, or aren't,
   # exhaustive, named after the groups with prefix in front.
   testsOf = exhaustive: prefix: pkgs.lib.mapAttrs
@@ -109,18 +106,3 @@ in
       };
     })
     rsyncs
-  // {
-    # Lock files in the shapes different versions of Nix write.
-    jq = pkgs.runCommand "krops-jq" {
-      nativeBuildInputs = [ pkgs.jq pkgs.nix ];
-    } ''
-      sh ${./jq.sh} ${pkgs.linkFarm "krops-flake-jq" (map
-        (name: { name = "${name}.jq"; path = pkgs.writeText "${name}.jq" flakeJq.${name}; })
-        [ "selected" "selfIsRemote" "selfLocked" ]
-        ++ [{
-          name = "metadataSubdir.nix";
-          path = pkgs.writeText "metadataSubdir.nix" flakeJq.metadataSubdir;
-        }])}
-      touch $out
-    '';
-  }

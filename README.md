@@ -743,7 +743,6 @@ nix-build tests -A flake          # the test for one source type
 nix-build tests -A exhaustive     # all exhaustive tests
 nix-build tests -A exhaustive.git # the remaining combinations of one test
 nix-build tests -A rsync-3-5-0    # the scenarios depending on rsync's version
-nix-build tests -A jq             # populate's programs for flakes, without VMs
 ```
 
 

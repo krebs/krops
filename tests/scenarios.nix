@@ -28,8 +28,6 @@
   gitFirst,
   # Version of rsync on the deploying machine.
   rsyncVersion,
-  # The implementation of populate, "shell" or "rust".
-  implementation,
 }:
 
 let
@@ -230,16 +228,12 @@ let
       then options // { fetchOnTarget = true; }
       else options));
 
-  # A phase copying flakes to a target using sudo, which isn't supported:
-  # the shell implementation refuses during evaluation, the Rust one when it
-  # runs, because only then it decides whether the target is local.
-  refuseCopyingWithSudo =
-    if implementation == "shell" then {
-      expect = "eval-error";
-      control = withFetchOnTarget;
-    } else {
-      expect.fail = "copying flakes to targets with sudo is not supported";
-    };
+  # A phase copying flakes to a target using sudo, which isn't supported,
+  # and gets refused during evaluation.
+  refuseCopyingWithSudo = {
+    expect = "eval-error";
+    control = withFetchOnTarget;
+  };
 
 in
 

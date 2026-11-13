@@ -49,4 +49,18 @@ with import ../../lib;
       throw "krops: sources draw inputs from each other: ${toString sorted.cycle}"
     else
       true);
+
+  # nix copy logs in as the target's user, so populate can't copy flakes to
+  # remote targets using sudo, which flake and flake-input sources without
+  # fetchOnTarget do.
+  checkCopyingWithSudo = target: source: let
+    copies = name: let s = source.${name}; in
+      elem s.type [ "flake" "flake-input" ] &&
+      !(s.${s.type}.fetchOnTarget or false);
+    name = findFirst copies null (attrNames source);
+  in
+    if name != null && target.sudo or false && !isLocalTarget target then
+      throw "krops: source ${target.path}/${name}: copying flakes to targets with sudo is not supported"
+    else
+      true;
 }

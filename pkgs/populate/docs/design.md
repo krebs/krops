@@ -14,22 +14,15 @@ This directory holds the program in Rust.  Another implementation, e.g. in
 Haskell, reads the same spec, prints the same messages, and passes the same
 tests.
 
-`shell.nix` is the shell implementation, which generates a script for each
-set of arguments.  It stays until the program delivers everything it does,
-and defines the behaviour the program has to match.
-
 ## Nix side
 
 `default.nix` is `pkgs.populate`.  Given populate's arguments, `{ backup ?
-false, force ? false, prune ? false, source, target }`, it returns the
-command delivering them.  `implementation` selects how:
-
-- `"shell"`, the default: `shell.nix`.
-- `"rust"`: `rust.nix`, which checks the arguments with `checks.nix`, turns
-  them into a spec, and returns a script running the program with the spec
-  on file descriptor 3, so the commands populate runs keep standard input.
-  The script puts the tools populate runs in front of `PATH`, and depends
-  on the store paths in the spec, so building it builds them.  `rustProgram` is the program, by default built by `program.nix`.
+false, force ? false, prune ? false, source, target }`, it checks them with
+`checks.nix`, turns them into a spec, and returns a script running the
+program with the spec on file descriptor 3, so the commands populate runs
+keep standard input.  The script puts the tools populate runs in front of
+`PATH`, and depends on the store paths in the spec, so building it builds
+them.  `rustProgram` is the program, by default built by `program.nix`.
 
 `writeDeploy` and the other functions of `pkgs.krops` use `pkgs.populate`,
 so their arguments stay as they are.
@@ -93,7 +86,7 @@ else.  A new version of the spec adds fields or changes their meaning; the
 program reads the versions it knows.
 
 Store paths in the spec, e.g. of a `file` source that is a derivation, must
-exist when the program runs.  The script `rust.nix` writes depends on them.
+exist when the program runs.  The script `default.nix` writes depends on them.
 Something producing a spec at run time has to build them first.
 
 ## Checks
@@ -107,14 +100,15 @@ The program checks the spec as `checks.nix` does, with the same messages:
 - Inputs get drawn from sources that exist, not from the source itself,
   and not in circles.
 
-Checks that depend on where populate runs come on top, e.g. refusing to
-copy flakes to targets using sudo, which needs to know whether the target
+Checks that depend on whether the target is local come on top, e.g.
+refusing to copy flakes to remote targets using sudo.  `checks.nix` does
+that during evaluation too, where `default.nix` decides whether the target
 is local.
 
 ## Output
 
 What populate prints on standard error is part of its interface: people
-read it, and the tests check it.  Messages are those of `shell.nix`, e.g.:
+read it, and the tests check it.  For example:
 
 ```
 populating 'host:/var/src/nixpkgs'...
@@ -152,7 +146,7 @@ places populate must not touch, check this after every phase.
 Whether a target is local is what the target's `local` says, or, if
 that's null, gets decided when the program runs: it is, if its user is
 `LOGNAME` and its host is `localhost` or the host's name, from `HOSTNAME`
-or `/etc/hostname`.  `rust.nix` decides during evaluation, like the other
+or `/etc/hostname`.  `default.nix` decides during evaluation, like the other
 functions of krops.  For a local target, populate runs commands directly.
 
 For a remote target, populate runs commands over ssh, sharing one master
@@ -167,12 +161,9 @@ Populate runs rsync, Git, ssh, and Nix as programs, found in `PATH`.
 ## Development
 
 - `cargo test` in this directory runs the program's unit tests.
-- `nix-build tests --argstr implementation rust -A smoke` runs the smoke
-  test, a few scenarios covering each source type and each kind of target,
-  with the program.
-- `nix-build tests --argstr implementation rust` runs all scenarios with
-  the program.  A change has to pass them with both implementations, as
-  long as there are two.
+- `nix-build tests -A smoke` runs the smoke test, a few scenarios covering
+  each source type and each kind of target.
+- `nix-build tests` runs all scenarios but the exhaustive ones.
 
 ## Status
 
@@ -182,7 +173,3 @@ on the target send back what it needs to know, e.g. what Nix prints as
 JSON, where paths resolve to, or store paths.  Delivering flake and
 flake-input sources is in `src/flake_input.rs`, drawing inputs and
 deriving copies in `src/flake.rs`.
-
-The jq programs and Nix functions in `flake-jq.nix`, which the shell
-implementation and the jq test use, have equivalents in Rust, with unit
-tests, among them the jq test's cases.

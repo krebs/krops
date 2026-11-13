@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Populate is a program written in Rust, which reads populate's arguments
+  as JSON.  The store gets one program for each version of krops, instead
+  of a script for each set of arguments.  `pkgs.populate`, `writeDeploy`,
+  and the other functions keep their arguments.
 - `git` sources with a branch or tag as `ref` follow it: populate fetches
   the branch or tag on every run, and resets the work tree to what it
   fetched.
