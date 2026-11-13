@@ -142,6 +142,68 @@ let
     fi
   '';
 
+  # Shell code printing why populate can't use the .git directory of the
+  # Git work tree at path, or nothing.  A .git directory that git clone and
+  # populate made has no symlinks, no commondir file, which names another
+  # repository, no linked work trees, and only the configuration they write:
+  # the repository's format, the remote, branches, and submodules, whose
+  # repositories have their work tree in the work tree.
+  gitProblems = path: let
+    gitDir = "${path}/.git";
+    # Keys of the configuration git clone writes, as patterns of case.
+    keys = [
+      "core.repositoryformatversion" "core.filemode" "core.bare"
+      "core.logallrefupdates" "core.symlinks" "core.ignorecase"
+      "core.precomposeunicode"
+      "extensions.objectformat" "extensions.refstorage"
+      "remote.origin.url" "remote.origin.fetch"
+      "branch.*.remote" "branch.*.merge"
+      "submodule.active" "submodule.*.url" "submodule.*.active"
+    ];
+  in /* sh */ ''(
+    links=$(find ${quote gitDir} -type l | head -n 3 | paste -s -d ' ' -)
+    if test -n "$links"; then
+      printf '%s contains symlinks: %s' ${quote gitDir} "$links"
+      exit
+    fi
+    common=$(find ${quote gitDir} -name commondir | head -n 1)
+    if test -n "$common"; then
+      printf '%s names another repository' "$common"
+      exit
+    fi
+    if test -e ${quote gitDir}/worktrees; then
+      printf '%s has linked work trees' ${quote gitDir}
+      exit
+    fi
+    find ${quote gitDir} -name config -type f | while IFS= read -r config; do
+      command git config --file "$config" --list --name-only |
+      while IFS= read -r key; do
+        case $key in
+          ${concatStringsSep "|" keys}) ;;
+          core.worktree)
+            # Submodules' repositories have their work tree in the work tree.
+            worktree=$(command git config --file "$config" core.worktree)
+            dir=$(dirname "$config")
+            case $dir/$worktree in
+              ${quote gitDir}/modules/*)
+                resolved=$(cd "$dir" && cd "$worktree" 2>/dev/null && pwd -P) || :
+                case $resolved in
+                  "$(cd ${quote path} && pwd -P)"/*) continue ;;
+                esac
+                ;;
+            esac
+            printf '%s sets core.worktree to %s' "$config" "$worktree"
+            exit 1
+            ;;
+          *)
+            printf '%s sets %s, which neither git clone nor populate does' "$config" "$key"
+            exit 1
+            ;;
+        esac
+      done || exit 1
+    done || :
+  )'';
+
   check = { force, target }: let
     sentinelFile = "${target.path}/.populate";
   in runShell target /* sh */ ''
@@ -1000,6 +1062,12 @@ let
 
   pop.git = target: source: runShell target /* sh */ ''
     set -efu
+    # Hooks and commands a repository's configuration names run with Git's
+    # commands, so populate's Git doesn't run any.  The configuration gets
+    # checked as well, but Git also runs a hook it has itself.
+    git() {
+      command git -c core.hooksPath=/dev/null -c core.fsmonitor=false "$@"
+    }
     # Remove target path if it doesn't look like a git worktree.
     # This can happen e.g. when it had a different type earlier.  A work
     # tree that a symlink points to, or whose .git is a symlink or a file
@@ -1009,6 +1077,27 @@ let
     if test -L ${quote target.path}/.git ||
         ! test -d ${quote target.path}/.git; then
       rm -fR ${quote target.path}
+    fi
+    # A .git directory can name places elsewhere too, which Git's commands
+    # change, or commands, which they run.  Populate only uses a work tree
+    # whose .git directory has nothing like that, and else replaces it if
+    # reclone is set, or fails, telling why.
+    if test -e ${quote target.path}; then
+      # Not $((, which would be arithmetic.
+      if problems=$( ${gitProblems target.path} ); then :; else
+        exit 1
+      fi
+      if test -n "$problems"; then
+        ${if source.reclone then /* sh */ ''
+          >&2 printf 'replacing the Git work tree %s, because %s\n' \
+              ${quote target.path} "$problems"
+          rm -fR ${quote target.path}
+        '' else /* sh */ ''
+          >&2 printf 'error: populate doesn'"'"'t use the Git work tree %s, because %s.  Fix that, remove the work tree, or set the source'"'"'s reclone to true to replace it by a fresh clone.\n' \
+              ${quote target.path} "$problems"
+          exit 1
+        ''}
+      fi
     fi
     if ! test -e ${quote target.path}; then
       ${if source.shallow then /* sh */ ''
@@ -1043,9 +1132,11 @@ let
           ''}
         fi
       ''}
-      git reset --hard "$hash" >&2
-      git submodule update --init --recursive
     fi
+    # Also if HEAD is there already: rewriting a lock file in place, e.g.,
+    # changes the work tree, and stages the lock file if Nix created it.
+    git reset --hard "$hash" >&2
+    git submodule update --init --recursive
 
     git clean -dfx \
         ${concatMapStringsSep " "

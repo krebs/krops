@@ -258,6 +258,10 @@
         ref = lib.mkOption {
           type = lib.types.str; # TODO lib.types.git.ref
         };
+        reclone = lib.mkOption {
+          default = false;
+          type = lib.types.bool;
+        };
         rewriteLock = lib.mkOption {
           default = true;
           type = lib.types.bool;

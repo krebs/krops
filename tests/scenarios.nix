@@ -586,7 +586,29 @@ assert !(krops.isLocalTarget (targets.remote "/"));
         '';
       }
     ];
-  })) targetKinds;
+  })) targetKinds
+  # A git source stops drawing inputs: its lock file, which Nix created and
+  # staged, goes, so the work tree is as the commit has it.
+  ++ map (targetKind: scenario {
+    name = "git-${targetKind}-dropInputs";
+    inherit targetKind;
+    phases = [
+      {
+        sources = alt // {
+          x.git = { url = gitUrl; ref = gitHead; inputs.dep.follows = "alt"; };
+        };
+        check = ''
+          expect_eq msg "$(nix_eval_online git+file:"$T"/x#msg)" git:alt
+        '';
+      }
+      {
+        sources = alt // { x.git = { url = gitUrl; ref = gitHead; }; };
+        check = ''
+          expect_eq status "$(git -C "$T"/x status --porcelain)" ""
+        '';
+      }
+    ];
+  }) targetKinds;
 
   pass = matrix "pass" {
     store = [ "pass" "pass-git" ];
@@ -1929,6 +1951,68 @@ assert !(krops.isLocalTarget (targets.remote "/"));
         '';
       };
     })
+    # Git work trees whose .git directory names places elsewhere, or a
+    # command: a work tree elsewhere, a configuration file elsewhere, another
+    # repository, and a command run when Git checks for changes.  Populate
+    # refuses them, telling why, and replaces them by fresh clones with
+    # reclone.  A hook doesn't run.
+    (s "git-foreign" (let
+      elsewhere = "/var/krops-elsewhere";
+      git = name: reclone: {
+        ${name}.git = { url = gitUrl; ref = gitHead; inherit reclone; };
+      };
+      untouched = ''
+        cmp -s ${elsewhere}/config ${elsewhere}/config.orig ||
+          fail "what b/.git/config links to changed"
+        test ! -e ${elsewhere}/ran || fail "a command in a .git directory ran"
+      '';
+      refused = name: message: {
+        sources = git name false;
+        expect.fail = "error: populate doesn't use the Git work tree /var/krops/git-foreign-${targetKind}/${name}, because ${message}.  Fix that, remove the work tree, or set the source's reclone to true to replace it by a fresh clone.";
+      };
+    in {
+      isolate = true;
+      prepare = ''
+        rm -fR ${elsewhere}
+        mkdir -p ${elsewhere} "$T"
+        for name in a b c d e; do
+          git clone -q ${gitUrl} "$T"/$name
+          git -C "$T"/$name checkout -q ${gitFirst}
+        done
+        git -C "$T"/a config core.worktree ${outside}/dir
+        mv "$T"/b/.git/config ${elsewhere}/config
+        ln -s ${elsewhere}/config "$T"/b/.git/config
+        cp -p ${elsewhere}/config ${elsewhere}/config.orig
+        printf '#! /bin/sh\ntouch ${elsewhere}/ran\n' > "$T"/c/.git/hooks/reference-transaction
+        chmod +x "$T"/c/.git/hooks/reference-transaction
+        echo ${outside}/repo/.git > "$T"/d/.git/commondir
+        git -C "$T"/e config core.fsmonitor "touch ${elsewhere}/ran"
+      '';
+      phases = [
+        (refused "a" "/var/krops/git-foreign-${targetKind}/a/.git/config sets core.worktree to ${outside}/dir")
+        (refused "b" "/var/krops/git-foreign-${targetKind}/b/.git contains symlinks: /var/krops/git-foreign-${targetKind}/b/.git/config")
+        {
+          sources = git "c" false;
+          check = untouched + ''
+            expect_eq "c HEAD" "$(git -C "$T"/c rev-parse HEAD)" ${gitHead}
+          '';
+        }
+        (refused "d" "/var/krops/git-foreign-${targetKind}/d/.git/commondir names another repository")
+        (refused "e" "/var/krops/git-foreign-${targetKind}/e/.git/config sets core.fsmonitor, which neither git clone nor populate does")
+        {
+          sources = git "a" true // git "b" true // git "c" true // git "d" true // git "e" true;
+          output = map
+            (name: "replacing the Git work tree /var/krops/git-foreign-${targetKind}/${name}, because")
+            [ "a" "b" "d" "e" ];
+          check = untouched + ''
+            for name in a b c d e; do
+              expect_eq "$name HEAD" "$(git -C "$T"/$name rev-parse HEAD)" ${gitHead}
+              test -e "$T"/$name/two || fail "$name/two missing"
+            done
+          '';
+        }
+      ];
+    }))
     (lib.optionals (targetKind == "local") [
       # Rewriting a lock file changes no other hard link to it.  The lock
       # file is like the source's, with its modification time, so rsync

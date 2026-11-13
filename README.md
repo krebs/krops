@@ -309,6 +309,13 @@ everything else.  It doesn't change or remove anything outside:
   is a symlink, or a file naming a repository elsewhere, gets replaced by a
   `git` source as well.
 
+* A `git` source only uses a work tree whose `.git` directory contains no
+  symlinks, no `commondir` file and no linked work trees, and only the
+  configuration that `git clone` and populate write.  Otherwise Git's
+  commands could change what's elsewhere, or run commands, so populating
+  fails, telling what's wrong, unless the source's `reclone` is set.  Git
+  runs no hooks.
+
 * Populate keeps its state in the sentinel, `.populate`, which becomes a
   directory once there is state to keep.  Populating fails if the sentinel,
   or a directory populate needs therein, is a symlink.
@@ -555,6 +562,11 @@ Supported attributes:
 * `shallow` (optional)
   boolean that controls whether only the requested commit ref. should be fetched
   instead of the whole history, to save disk space and bandwith. Defaults to `false`.
+
+* `reclone` (optional) -
+  boolean that controls whether a work tree populate can't use, see
+  [The target directory](#the-target-directory), gets replaced by a fresh
+  clone, instead of failing.  Defaults to `false`.
 
 * `inputs` (optional) -
   inputs of the flake in this source to draw from other sources, see
