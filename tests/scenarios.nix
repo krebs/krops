@@ -1050,11 +1050,9 @@ assert !(krops.isLocalTarget (targets.remote "/"));
           sources = { inherit (sources) a; b.symlink = "a"; };
           prune = true;
           output = map
-            (name: "pruning ${{
-              local = "";
-              remote = "root@${remoteHost}:";
-              sudo = "deploy@${remoteHost}:";
-            }.${targetKind}}/var/krops/prune-${targetKind}/${name}")
+            (name: "pruning ${
+              optionalString (targetKind != "local") "${remoteHost}:"
+            }/var/krops/prune-${targetKind}/${name}")
             [ "c" "d" "other" ];
           check = ''
             test -e "$T"/a/flake.nix || fail "a removed"

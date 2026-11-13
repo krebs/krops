@@ -77,14 +77,10 @@ let
     fi
   '';
 
-  # The path on the target, as rsync names it: prefixed by the user and host
-  # if the target isn't local.
+  # The path on the target, as populate names it in what it prints:
+  # prefixed by the host if the target isn't local.
   targetName = target: path:
-    optionalString (!isLocalTarget target) (
-      (optionalString (target.user != "") "${target.user}@") +
-      "${target.host}:"
-    ) +
-    path;
+    optionalString (!isLocalTarget target) "${target.host}:" + path;
 
   # Shell code that removes the entries of the directory dir, a shell word,
   # that aren't named names.  find, unlike a loop reading names, copes with
@@ -221,10 +217,8 @@ let
   in runShell target /* sh */ ''
     # Before anything touches it, which would touch what it points to.
     if test -L ${quote sentinelFile}; then
-      >&2 printf 'error: sentinel file is a symlink: %s\n' ${quote (
-        optionalString (!isLocalTarget target) "${target.host}:" +
-        sentinelFile
-      )}
+      >&2 printf 'error: sentinel file is a symlink: %s\n' \
+          ${quote (targetName target sentinelFile)}
       exit 1
     fi
     ${optionalString force /* sh */ ''
@@ -234,10 +228,8 @@ let
       fi
     ''}
     if ! test -e ${quote sentinelFile}; then
-      >&2 printf 'error: missing sentinel file: %s\n' ${quote (
-        optionalString (!isLocalTarget target) "${target.host}:" +
-        sentinelFile
-      )}
+      >&2 printf 'error: missing sentinel file: %s\n' \
+          ${quote (targetName target sentinelFile)}
       exit 1
     fi
   '';
@@ -248,10 +240,8 @@ let
     runShell target /* sh */ ''
       ${useState sentinelFile []}
       if ! test -d ${quote sentinelFile}; then
-        >&2 printf 'error: sentinel file is not a directory: %s\n' ${quote (
-          optionalString (!isLocalTarget target) "${target.host}:" +
-          sentinelFile
-        )}
+        >&2 printf 'error: sentinel file is not a directory: %s\n' \
+            ${quote (targetName target sentinelFile)}
         exit 1
       fi
       rsync >&2 \
@@ -707,7 +697,6 @@ let
     ${removeOthers {
       dir = ".";
       names = attrNames sources ++ [ ".populate" ];
-      # Like populating names the target.
       log = quote (targetName target target.path);
     }}
     roots=.populate/flake-inputs
@@ -1398,7 +1387,13 @@ let
         -rlptD \
         ${optionalString config.deleteExcluded /* sh */ "--delete-excluded"} \
         "$source_path" \
-        ${quote (targetName target target.path)} \
+        ${quote (
+          optionalString (!isLocalTarget target) (
+            (optionalString (target.user != "") "${target.user}@") +
+            "${target.host}:"
+          ) +
+          target.path
+        )} \
       >&2
   '';
 
