@@ -52,13 +52,17 @@ gc() {
 # Canaries are files outside the target directories, which populate must
 # never change, whatever the target directories contain.  Some scenarios
 # point links at them.  The manifest lists every entry with its type, mode,
-# and link target, and every file with its checksum.
+# modification time, and link target, and every file with its checksum.
+# Entries beside the target directories whose names start like the
+# canaries' count as well, so files created next to them show.
 canary_manifest() {
+  set -- /var/krops-outside $(
+    find /var/krops -mindepth 1 -maxdepth 1 \
+        \( -name 'canary*' -o -name 'sibling*' \) 2>/dev/null
+  )
   {
-    find /var/krops/canary /var/krops/sibling /var/krops-outside \
-        -printf '%y %m %p -> %l\n'
-    find /var/krops/canary /var/krops/sibling /var/krops-outside \
-        -type f -exec sha256sum {} +
+    find "$@" -printf '%y %m %T@ %p -> %l\n'
+    find "$@" -type f -exec sha256sum {} +
   } 2>&1 | sort
 }
 
