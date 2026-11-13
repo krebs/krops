@@ -1,6 +1,6 @@
 # Changes
 
-## Unreleased
+## 1.31.1
 
 - Drawing an input from a source that isn't a directory stops populate,
   instead of locking the flake with an empty URL, which Nix takes for the
