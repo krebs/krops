@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Git can't take a `git` source's `url` or `ref`, or a `pass` source's
+  `name`, for an option.
 - `git` sources with a branch or tag as `ref` follow it: populate fetches
   the branch or tag on every run, and resets the work tree to what it
   fetched.

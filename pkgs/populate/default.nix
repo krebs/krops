@@ -1199,26 +1199,27 @@ let
       ${if source.shallow then /* sh */ ''
         git init ${quote target.path}
       '' else /* sh */ ''
-        git clone --recurse-submodules ${quote source.url} ${quote target.path}
+        git clone --recurse-submodules -- ${quote source.url} ${quote target.path}
       ''}
     fi
     cd ${quote target.path}
     if ! url=$(git config remote.origin.url); then
-      git remote add origin ${quote source.url}
+      git remote add -- origin ${quote source.url}
     elif test "$url" != ${quote source.url}; then
-      git remote set-url origin ${quote source.url}
+      git remote set-url -- origin ${quote source.url}
     fi
 
     # A commit, given by its hash or a prefix thereof, gets fetched only if
     # the work tree lacks it, unless fetchAlways is set.  A branch or tag
     # gets fetched on every run, so the work tree follows it: resetting to
     # its name would reset to a local branch, which fetching doesn't move.
+    # After --, a ref can't be taken for an option.
     ref=${quote source.ref}
     fetch() {
       ${if source.shallow then /* sh */ ''
-        git fetch --depth=1 origin "$1"
+        git fetch --depth=1 origin -- "$1"
       '' else /* sh */ ''
-        git fetch origin "$1"
+        git fetch origin -- "$1"
       ''}
     }
     if printf %s "$ref" | grep -Eqx '[0-9a-f]{4,40}'; then
@@ -1257,7 +1258,7 @@ let
 
     if test -e ${quote source.dir}/.git; then
       local_pass_info=${quote source.name}\ $(
-        ${git}/bin/git -C ${quote source.dir} log -1 --format=%H ${quote source.name}
+        ${git}/bin/git -C ${quote source.dir} log -1 --format=%H -- ${quote source.name}
         # we append a hash for every symlink, otherwise we would miss updates on
         # files where the symlink points to
         ${findutils}/bin/find ${quote source.dir}/${quote source.name} -type l \
@@ -1289,7 +1290,7 @@ let
       pass_out=$PWD/$rel_name
 
       ${coreutils}/bin/mkdir -p "$(${coreutils}/bin/dirname "$pass_out")"
-      PASSWORD_STORE_DIR=${quote source.dir} ${pass}/bin/pass show "$pass_name" > "$pass_out"
+      PASSWORD_STORE_DIR=${quote source.dir} ${pass}/bin/pass show -- "$pass_name" > "$pass_out"
       if [ -n "$pass_date" ]; then
         ${coreutils}/bin/touch -d "$pass_date" "$pass_out"
       fi
