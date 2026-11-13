@@ -152,9 +152,9 @@ functions of krops.  For a local target, populate runs commands directly.
 For a remote target, populate runs commands over ssh, sharing one master
 connection per target.  The commands are fixed POSIX shell snippets, with
 values passed as positional arguments, so nothing gets quoted into them.
-The target needs a POSIX shell, coreutils, findutils, rsync, Git for
-`git` sources, and Nix for flakes; fresh installations of NixOS lack rsync
-and Git.  With `sudo`, the snippets run via `sudo`.
+The target needs a POSIX shell, coreutils, findutils, rsync, `patch` for
+patches, Git for `git` sources, and Nix; NixOS lacks Git.  With `sudo`,
+the snippets run via `sudo`.
 
 Populate runs rsync, Git, ssh, and Nix as programs, found in `PATH`.
 

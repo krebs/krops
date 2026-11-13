@@ -55,6 +55,22 @@ in
 and run `$(nix-build --no-out-link krops.nix)` to deploy the target machine.
 
 
+## Requirements
+
+The deploying machine needs Nix and nixpkgs 23.11 or later.  krops builds
+populate, the program that delivers the sources, with nixpkgs' Rust the
+first time it's used, which fetches the program's dependencies from
+[crates.io](https://crates.io).
+
+The target needs Nix, a POSIX shell, coreutils, findutils, rsync, and
+`patch` for sources with `patches`, and a remote target ssh access as
+root, or as a user who may use `sudo`.  NixOS has all of them, rsync as
+long as `environment.defaultPackages` contains it.  `git` sources need Git on the
+target, which NixOS lacks, so the minimal example above installs it.
+Features that say so need Nix with flake support (Nix 2.4 or later) on the
+machine that uses them.
+
+
 ## Using krops from a flake
 
 krops' flake provides `populate`, `writeDeploy`, and the other functions
@@ -87,7 +103,8 @@ described below as `lib.<system>`, and its `lib` directory provides
 
 krops evaluates `<nixpkgs/lib>`, environment variables, and `/etc/hostname`,
 which pure evaluation doesn't allow, so deploy with `nix run --impure .#deploy`.
-krops exports some funtions under `krops.` namely:
+
+`pkgs.krops` provides the following functions.
 
 ## writeDeploy
 
@@ -743,7 +760,12 @@ nix-build tests -A flake          # the test for one source type
 nix-build tests -A exhaustive     # all exhaustive tests
 nix-build tests -A exhaustive.git # the remaining combinations of one test
 nix-build tests -A rsync-3-5-0    # the scenarios depending on rsync's version
+nix-build tests -A smoke          # a few scenarios of each kind, in one VM
 ```
+
+Populate is a program in Rust, in `pkgs/populate`, which
+[`pkgs/populate/docs/design.md`](pkgs/populate/docs/design.md) describes.
+`cargo test` in that directory runs its unit tests, without VMs.
 
 
 ## References
