@@ -8,10 +8,35 @@ use std::collections::BTreeMap;
 /// one's message.
 pub fn spec(spec: &Spec) -> Result<(), String> {
     target_path(&spec.target.path)?;
-    for name in spec.source.keys() {
+    for (name, source) in &spec.source {
         source_name(name)?;
+        settings(name, source)?;
     }
     inputs(&spec.source)
+}
+
+/// The settings that are paths on the deploying machine, which populate
+/// passes to commands, must be absolute, as lib/types/populate.nix demands,
+/// so none can be taken for an option.
+pub fn settings(name: &str, source: &Source) -> Result<(), String> {
+    let keys: &[&str] = match source.kind.as_str() {
+        "file" => &["path"],
+        "pass" => &["dir"],
+        "pipe" => &["command"],
+        _ => &[],
+    };
+    for key in keys {
+        // A derivation's path is a string in the spec, like other paths.
+        let value = source.settings.get(*key).and_then(|v| v.as_str());
+        if !value.is_some_and(|v| v.starts_with('/')) {
+            return Err(format!(
+                "krops: source {name}: the {key} of a {} source must be an absolute path, not {}",
+                source.kind,
+                value.map_or("missing".to_string(), quote)
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// Like JSON, the way Nix' toJSON quotes strings in messages.
@@ -89,17 +114,18 @@ pub fn inputs(sources: &BTreeMap<String, Source>) -> Result<(), String> {
         }
     }
     // Depth-first search, with the path of sources on the way, which repeats
-    // a source if drawing goes round in circles.
+    // a source if drawing goes round in circles.  The message names the
+    // whole path, the way into the circle included, like checks.nix.
     fn visit<'a>(
         name: &'a str,
         drawn_from: &'a BTreeMap<&str, Vec<String>>,
         done: &mut Vec<&'a str>,
         path: &mut Vec<&'a str>,
     ) -> Result<(), String> {
-        if let Some(i) = path.iter().position(|p| *p == name) {
+        if path.contains(&name) {
             return Err(format!(
                 "krops: sources draw inputs from each other: {}",
-                path[i..].join(" ")
+                path.join(" ")
             ));
         }
         if done.contains(&name) {
@@ -204,6 +230,39 @@ mod tests {
         assert_eq!(
             inputs(&cycle).unwrap_err(),
             "krops: sources draw inputs from each other: a b"
+        );
+    }
+
+    #[test]
+    fn settings() {
+        let spec = |file: &str| -> Spec {
+            serde_json::from_str(&format!(
+                r#"{{"version": 1, "target": {{"host": "h", "path": "/a"}},
+                    "source": {{"x": {{"type": "file", "file": {}}}}}}}"#,
+                file
+            ))
+            .unwrap()
+        };
+        assert!(super::spec(&spec(r#"{"path": "/src"}"#)).is_ok());
+        assert!(super::spec(&spec(r#"{"path": "--rsync-path=x"}"#)).is_err());
+        assert_eq!(
+            super::spec(&spec(r#"{"path": "relative"}"#)).unwrap_err(),
+            r#"krops: source x: the path of a file source must be an absolute path, not "relative""#
+        );
+    }
+
+    #[test]
+    fn cycle_reached_from_another_source() {
+        let cycle = sources(
+            r#"{
+            "a": {"type": "file", "file": {"path": "/a", "inputs": {"i": {"follows": "b"}}}},
+            "b": {"type": "file", "file": {"path": "/b", "inputs": {"i": {"follows": "c"}}}},
+            "c": {"type": "file", "file": {"path": "/c", "inputs": {"i": {"follows": "b"}}}}
+        }"#,
+        );
+        assert_eq!(
+            inputs(&cycle).unwrap_err(),
+            "krops: sources draw inputs from each other: a b c"
         );
     }
 }
