@@ -8,8 +8,9 @@
 # The smoke test runs a few scenarios covering each source type and each kind
 # of target in a single VM test, for checking changes quickly; build it with
 # nix-build tests -A smoke.  jq runs populate's jq programs for flakes without
-# VMs.
-{ pkgs ? import ../pkgs {} }:
+# VMs.  implementation selects populate's implementation, e.g. nix-build
+# tests --argstr implementation rust -A smoke.
+{ pkgs ? import ../pkgs {}, implementation ? "shell" }:
 
 let
   # HEAD of /fixtures/gitsrc, which fixtures.sh creates deterministically,
@@ -24,11 +25,13 @@ let
     (pkgs.callPackage ./rsync.nix {});
 
   # The scenarios, with populate using rsync.
-  scenariosWith = rsync: import ./scenarios.nix {
+  scenariosWith = rsync: let
+    populate = pkgs.populate.override { inherit implementation rsync; };
+  in import ./scenarios.nix {
     inherit (pkgs) lib;
     krops = import ../lib;
-    populate = pkgs.populate.override { inherit rsync; };
-    inherit (pkgs.krops) writeDeploy;
+    inherit implementation populate;
+    inherit (pkgs.krops.override { inherit populate; }) writeDeploy;
     url = "http://deployer:8000";
     gitUrl = "git://deployer/gitsrc.git";
     remoteHost = "target";

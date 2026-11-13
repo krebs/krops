@@ -28,6 +28,8 @@
   gitFirst,
   # Version of rsync on the deploying machine.
   rsyncVersion,
+  # The implementation of populate, "shell" or "rust".
+  implementation,
 }:
 
 let
@@ -227,6 +229,17 @@ let
     if lib.elem type [ "flake" "flake-input" ]
       then options // { fetchOnTarget = true; }
       else options));
+
+  # A phase copying flakes to a target using sudo, which isn't supported:
+  # the shell implementation refuses during evaluation, the Rust one when it
+  # runs, because only then it decides whether the target is local.
+  refuseCopyingWithSudo =
+    if implementation == "shell" then {
+      expect = "eval-error";
+      control = withFetchOnTarget;
+    } else {
+      expect.fail = "copying flakes to targets with sudo is not supported";
+    };
 
 in
 
@@ -431,10 +444,7 @@ assert !(krops.isLocalTarget (targets.remote "/"));
           inherit (flags) fetchOnTarget materialize;
         } // drawInputs flags.inputs { dep.follows = "alt"; };
       } // optionalAttrs (flags.inputs != "none") alt;
-    } // (if copyingWithSudo flags ctx then {
-      expect = "eval-error";
-      control = withFetchOnTarget;
-    } else {
+    } // (if copyingWithSudo flags ctx then refuseCopyingWithSudo else {
       check = if flags.kind == "subdir" then checkFlake {
         attr = "who"; expected = "sub"; subdir = true;
         materialized = flags.materialize;
@@ -466,10 +476,7 @@ assert !(krops.isLocalTarget (targets.remote "/"));
             inherit (flags) fetchOnTarget materialize;
           } // drawInputs inputs { inner.follows = "alt"; };
         } // optionalAttrs (inputs != "none") alt;
-      } // (if copyingWithSudo flags ctx then {
-        expect = "eval-error";
-        control = withFetchOnTarget;
-      } else {
+      } // (if copyingWithSudo flags ctx then refuseCopyingWithSudo else {
         check = {
           dep = checkFlake {
             attr = "greeting";

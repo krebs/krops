@@ -1,0 +1,11 @@
+[package]
+name = "populate"
+version = "2.0.0-dev"
+edition = "2021"
+description = "Delivers sources to a target directory, as krops' populate"
+license = "WTFPL"
+publish = false
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
