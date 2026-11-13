@@ -108,10 +108,11 @@ pub fn transfer(context: &Context, config: &Config, source_path: &str, path: &st
         command.arg("--insecure-links");
     }
     // Each item gets logged with what changed about it, and its size, as
-    // transferred and in total.
+    // transferred and in total, in units of 1024, which three apostrophes
+    // ask for.
     command
         .arg("--itemize-changes")
-        .arg("--out-format=%i %n%L %''b/%''l")
+        .arg("--out-format=%i %n%L %'''b/%'''l")
         .arg("--info=backup,del,copy,misc,mount,name,nonreg,remove,skip,symsafe")
         // Nothing relies on the times of directories and symlinks, and
         // keeping them would log a line for each directory changed.

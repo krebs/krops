@@ -120,7 +120,8 @@ replacing the Git work tree 'host:/var/src/x', because ...
 A target path in a message starts with `user@host:` for remote targets,
 without `user@` if the user is root or not set, and is a plain path for
 the local target.  Errors start with `error:` or `krops:`, warnings with
-`warning:`.  rsync's itemized changes appear as `%i %n%L %b/%l`.
+`warning:`.  rsync's itemized changes appear as `%i %n%L %'''b/%'''l`, with sizes in
+units of 1024.
 
 ## Safety
 
