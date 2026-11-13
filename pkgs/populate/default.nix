@@ -123,26 +123,26 @@ let
         ''} sh ${optionalString (log != null) log} {} +
   '';
 
-  # Shell code that removes a symlink at path, saying so, because the link
-  # may be there on purpose, but populate never follows it: what a source
-  # delivers would change or remove what the link points to.
-  removeLink = path: /* sh */ ''
+  # Shell code that removes a symlink at path on target, saying so, because
+  # the link may be there on purpose, but populate never follows it: what a
+  # source delivers would change or remove what the link points to.
+  removeLink = target: path: /* sh */ ''
     if test -L ${quote path}; then
-      >&2 printf 'replacing symlink %s, which points to %s\n' \
-          ${quote path} "$(readlink ${quote path})"
+      >&2 printf "replacing symlink '%s', which points to '%s'...\n" \
+          ${quote (targetName target path)} "$(readlink ${quote path})"
       rm ${quote path}
     fi
   '';
 
   # Shell code that removes a symlink at path like removeLink does, unless
   # it points into the store, like the links populate puts there itself.
-  removeForeignLink = path: /* sh */ ''
+  removeForeignLink = target: path: /* sh */ ''
     if test -L ${quote path}; then
       # Resolved, so a link like /nix/store/../.. doesn't count.
       case $(readlink -f ${quote path}) in
         /nix/store/*) ;;
         *)
-          ${removeLink path}
+          ${removeLink target path}
           ;;
       esac
     fi
@@ -150,8 +150,8 @@ let
 
   # Shell code that makes room at path for a link into the store, which Nix
   # only puts in place of another link into the store.
-  makeRoomForLink = path: /* sh */ ''
-    ${removeForeignLink path}
+  makeRoomForLink = target: path: /* sh */ ''
+    ${removeForeignLink target path}
     if ! test -L ${quote path} && test -e ${quote path}; then
       rm -fR ${quote path}
     fi
@@ -448,7 +448,7 @@ let
               cd ${quote "${dir}/work"}
               ${applyPatches}
             )
-            ${removeForeignLink targetPath}
+            ${removeForeignLink target targetPath}
             rm -fR ${quote targetPath}
             mv ${quote "${dir}/work"} ${quote targetPath}
             write_key "$key"
@@ -486,7 +486,7 @@ let
                 --add-root ${quote "${dir}/result"} --indirect >/dev/null
             write_key "$key"
           fi
-          ${makeRoomForLink targetPath}
+          ${makeRoomForLink target targetPath}
           # .populate/derived/<name>/result roots the store path.
           ln -fns "$result''${subdir:+/$subdir}" ${quote targetPath}
         ''}
@@ -717,7 +717,7 @@ let
   '';
 
   pop.derivation = target: source: runShell target /* sh */ ''
-    ${makeRoomForLink target.path}
+    ${makeRoomForLink target target.path}
     nix-build -E ${quote source.text} -o ${quote target.path} >&2
   '';
 
@@ -905,7 +905,7 @@ let
       ${optionalString derived /* sh */ ''
         mkdir -p ${quote (dirOf linkPath)}
       ''}
-      ${makeRoomForLink linkPath}
+      ${makeRoomForLink target linkPath}
       nix-store --realise "$path" --add-root ${quote linkPath} --indirect >/dev/null
       # The garbage collector follows the link into the store path.
       if test -n "$dir"; then
@@ -1169,7 +1169,7 @@ let
     # tree that a symlink points to, or whose .git is a symlink or a file
     # naming a repository elsewhere, isn't populate's own: fetching,
     # resetting, and cleaning would change what's elsewhere.
-    ${removeLink target.path}
+    ${removeLink target target.path}
     if test -L ${quote target.path}/.git ||
         ! test -d ${quote target.path}/.git; then
       rm -fR ${quote target.path}
@@ -1185,12 +1185,12 @@ let
       fi
       if test -n "$problems"; then
         ${if source.reclone then /* sh */ ''
-          >&2 printf 'replacing the Git work tree %s, because %s\n' \
-              ${quote target.path} "$problems"
+          >&2 printf "replacing the Git work tree '%s', because %s...\n" \
+              ${quote (targetName target target.path)} "$problems"
           rm -fR ${quote target.path}
         '' else /* sh */ ''
           >&2 printf 'error: populate doesn'"'"'t use the Git work tree %s, because %s.  Fix that, remove the work tree, or set the source'"'"'s reclone to true to replace it by a fresh clone.\n' \
-              ${quote target.path} "$problems"
+              ${quote (targetName target target.path)} "$problems"
           exit 1
         ''}
       fi
@@ -1347,7 +1347,7 @@ let
     target' = target // { path = "${target.path}/${name}"; };
   in writers.writeDash "populate.${target'.host}.${name}" ''
     set -efu
-    echo ${quote "populating '${target'.host}:${target'.path}'..."} >&2
+    echo ${quote "populating '${targetName target' target'.path}'..."} >&2
     PWD=$TMPDIR/workdirs/${quote name}
     mkdir -p "$PWD"
     cd "$PWD"
@@ -1361,7 +1361,7 @@ let
     # every hard link to it, e.g. one elsewhere, or a backup's.  So each file
     # with other hard links gets replaced by a copy of its own first.
     ${runShell target /* sh */ ''
-      ${removeLink target.path}
+      ${removeLink target target.path}
       if test -d ${quote target.path}; then
         find ${quote target.path} -type f -links +1 -exec sh -c '
           for file; do

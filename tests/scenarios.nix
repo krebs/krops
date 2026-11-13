@@ -64,6 +64,14 @@ let
 
   alt = { alt.file = "/fixtures/alt"; };
 
+  # A path on a target of kind targetKind, as populate names it in what it
+  # prints.
+  targetName = targetKind: path: {
+    local = "";
+    remote = "${remoteHost}:";
+    sudo = "deploy@${remoteHost}:";
+  }.${targetKind} + path;
+
   # How a source draws inputs from other sources: not at all, by rewriting
   # the lock file of its flake, or by a generated flake.
   inputModes = [ "none" "rewrite" "generated" ];
@@ -1050,11 +1058,7 @@ assert !(krops.isLocalTarget (targets.remote "/"));
           sources = { inherit (sources) a; b.symlink = "a"; };
           prune = true;
           output = map
-            (name: "pruning '${{
-              local = "";
-              remote = "${remoteHost}:";
-              sudo = "deploy@${remoteHost}:";
-            }.${targetKind}}/var/krops/prune-${targetKind}/${name}'...")
+            (name: "pruning '${targetName targetKind "/var/krops/prune-${targetKind}/${name}"}'...")
             [ "c" "d" "other" ];
           check = ''
             test -e "$T"/a/flake.nix || fail "a removed"
@@ -1714,7 +1718,7 @@ assert !(krops.isLocalTarget (targets.remote "/"));
       phases = [
         (phase // {
           output = optional says
-            "replacing symlink /var/krops/link-${type}-${targetKind}/x, which points to ${outside}/${to}";
+            "replacing symlink '${targetName targetKind "/var/krops/link-${type}-${targetKind}/x"}', which points to '${outside}/${to}'...";
         })
         phase
       ];
@@ -1755,7 +1759,11 @@ assert !(krops.isLocalTarget (targets.remote "/"));
     (s "rsync-log" {
       phases = [{
         sources.x.file = "/fixtures/alt";
-        output = [ "f+++++++++ flake.nix " "/53" ];
+        output = [
+          "f+++++++++ flake.nix " "/53"
+          # Named like pruning names it.
+          "populating '${targetName targetKind "/var/krops/rsync-log-${targetKind}/x"}'..."
+        ];
       }];
     })
     # The link points at a Git work tree, which resetting and cleaning would
@@ -1996,7 +2004,7 @@ assert !(krops.isLocalTarget (targets.remote "/"));
       '';
       refused = name: message: {
         sources = git name false;
-        expect.fail = "error: populate doesn't use the Git work tree /var/krops/git-foreign-${targetKind}/${name}, because ${message}.  Fix that, remove the work tree, or set the source's reclone to true to replace it by a fresh clone.";
+        expect.fail = "error: populate doesn't use the Git work tree ${targetName targetKind "/var/krops/git-foreign-${targetKind}/${name}"}, because ${message}.  Fix that, remove the work tree, or set the source's reclone to true to replace it by a fresh clone.";
       };
     in {
       isolate = true;
@@ -2030,7 +2038,7 @@ assert !(krops.isLocalTarget (targets.remote "/"));
         {
           sources = git "a" true // git "b" true // git "c" true // git "d" true // git "e" true;
           output = map
-            (name: "replacing the Git work tree /var/krops/git-foreign-${targetKind}/${name}, because")
+            (name: "replacing the Git work tree '${targetName targetKind "/var/krops/git-foreign-${targetKind}/${name}"}', because")
             [ "a" "b" "d" "e" ];
           check = untouched + ''
             for name in a b c d e; do
