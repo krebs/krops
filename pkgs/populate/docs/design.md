@@ -27,9 +27,9 @@ command delivering them.  `implementation` selects how:
 - `"shell"`, the default: `shell.nix`.
 - `"rust"`: `rust.nix`, which checks the arguments with `checks.nix`, turns
   them into a spec, and returns a script running the program with the spec
-  on its standard input.  The script sets `PATH` to the tools populate
-  runs, and depends on the store paths in the spec, so building it builds
-  them.  `rustProgram` is the program, by default built by `program.nix`.
+  on file descriptor 3, so the commands populate runs keep standard input.
+  The script puts the tools populate runs in front of `PATH`, and depends
+  on the store paths in the spec, so building it builds them.  `rustProgram` is the program, by default built by `program.nix`.
 
 `writeDeploy` and the other functions of `pkgs.krops` use `pkgs.populate`,
 so their arguments stay as they are.
@@ -72,6 +72,7 @@ The spec is a JSON object:
 | `path`         | string           |         | The target directory.                    |
 | `sudo`         | boolean          | false   | Deliver as root, via sudo.               |
 | `extraOptions` | array of strings | []      | More arguments for ssh.                  |
+| `local`        | boolean or null  | null    | Whether the target is local.             |
 
 Each source is an object with the field `type`, the source's type, and a
 field named after the type, holding the source's settings:
@@ -148,9 +149,11 @@ places populate must not touch, check this after every phase.
 
 ## Execution
 
-Whether a target is local gets decided when the program runs: it is, if
-its user is the user running populate and its host is `localhost` or the
-host's name.  For a local target, populate runs commands directly.
+Whether a target is local is what the target's `local` says, or, if
+that's null, gets decided when the program runs: it is, if its user is
+`LOGNAME` and its host is `localhost` or the host's name, from `HOSTNAME`
+or `/etc/hostname`.  `rust.nix` decides during evaluation, like the other
+functions of krops.  For a local target, populate runs commands directly.
 
 For a remote target, populate runs commands over ssh, sharing one master
 connection per target.  The commands are fixed POSIX shell snippets, with
@@ -173,5 +176,7 @@ Populate runs rsync, Git, ssh, and Nix as programs, found in `PATH`.
 
 ## Status
 
-The program reads the spec, checks it, and fails, saying that delivering
-sources isn't implemented yet.
+The program delivers `derivation`, `file`, `git`, `pass`, `passage`,
+`pipe`, and `symlink` sources, makes backups, and prunes.  Given `flake`
+or `flake-input` sources, or sources drawing inputs from others, it fails
+before changing anything, saying that these aren't implemented yet.

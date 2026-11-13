@@ -2,6 +2,10 @@
 //! JSON file or - for standard input, says.  See docs/design.md.
 
 mod check;
+mod populate;
+mod rsync;
+mod run;
+mod sh;
 mod spec;
 
 use std::io::Read;
@@ -50,6 +54,29 @@ fn main() -> ExitCode {
         eprintln!("{message}");
         return ExitCode::FAILURE;
     }
-    eprintln!("populate: delivering sources isn't implemented yet");
-    ExitCode::FAILURE
+    run::trap_signals();
+    let context = match run::Context::new(spec.target.clone(), spec.target.local) {
+        Ok(context) => context,
+        Err(failure) => return exit(failure),
+    };
+    let result = populate::populate(&context, &spec);
+    run::ignore_signals();
+    context.clean_up();
+    match result {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(failure) => exit(failure),
+    }
+}
+
+/// Says why populate fails, unless a command did, and returns the exit
+/// status for that.
+fn exit(failure: run::Failure) -> ExitCode {
+    match failure {
+        run::Failure::Message(message) => {
+            eprintln!("{message}");
+            ExitCode::FAILURE
+        }
+        run::Failure::Command => ExitCode::FAILURE,
+        run::Failure::Signal(signal) => ExitCode::from(128 + signal as u8),
+    }
 }

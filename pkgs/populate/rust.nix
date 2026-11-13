@@ -26,18 +26,22 @@ let
       port = if target.port or null == null then null else toString target.port;
       sudo = target.sudo or false;
       extraOptions = target.extraOptions or [];
+      # Decided during evaluation, like the other functions of krops do.
+      local = isLocalTarget target;
     };
   };
 in
 writers.writeDash "populate.${target.host}" /* sh */ ''
   set -efu
   echo + "$0" >&2
+  # The tools populate depends on, in front of others of the same name.
   PATH=${makeBinPath [
-    coreutils findutils git jq nix openssh pass passage rsync
+    rsync openssh git nix pass passage jq findutils coreutils
   ]}''${PATH:+:$PATH}
   export PATH
-  # The JSON is a single line, which can't be the delimiter.
-  exec ${program}/bin/populate - <<'EOF'
+  # On a file descriptor of its own, so the commands populate runs keep
+  # standard input.  The JSON is a single line, which can't be the delimiter.
+  exec ${program}/bin/populate /dev/fd/3 3<<'EOF'
   ${spec}
   EOF
 ''

@@ -1,8 +1,5 @@
 //! The spec: populate's arguments as JSON, as docs/design.md describes them.
 
-// Delivering sources isn't implemented yet, so most of the spec is unused.
-#![allow(dead_code)]
-
 use serde::Deserialize;
 use serde_json::{Map, Value};
 use std::collections::BTreeMap;
@@ -26,6 +23,8 @@ pub const SOURCE_TYPES: &[&str] = &[
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Spec {
+    /// Checked before the rest, so it's only part of the shape here.
+    #[allow(dead_code)]
     pub version: u64,
     #[serde(default)]
     pub backup: bool,
@@ -37,7 +36,7 @@ pub struct Spec {
     pub target: Target,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct Target {
     #[serde(default)]
@@ -50,6 +49,10 @@ pub struct Target {
     pub sudo: bool,
     #[serde(default)]
     pub extra_options: Vec<String>,
+    /// Whether the target is the machine populate runs on, or null to
+    /// decide that when it runs.
+    #[serde(default)]
+    pub local: Option<bool>,
 }
 
 /// A source: its type, and the settings of that type, under the type's name.
