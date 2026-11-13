@@ -99,6 +99,10 @@ The program checks the spec as `checks.nix` does, with the same messages:
   neither `..` nor control characters.
 - Inputs get drawn from sources that exist, not from the source itself,
   and not in circles.
+- The settings of a source are those `lib/types/populate.nix` defines for
+  its type, of the kinds it defines, e.g. absolute paths for the paths of
+  `file`, `pass`, and `pipe` sources.  `checks.nix` doesn't repeat this,
+  since `evalSource` checks the types.
 
 Checks that depend on whether the target is local come on top, e.g.
 refusing to copy flakes to remote targets using sudo.  `checks.nix` does

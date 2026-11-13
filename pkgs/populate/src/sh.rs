@@ -238,7 +238,7 @@ nix-build -E "$3" -o "$1" >&2
 
 /// symlink PATH TARGET: makes PATH a symlink to TARGET.
 pub const SYMLINK: &str = r#"
-ln -fnsT "$2" "$1"
+ln -fnsT -- "$2" "$1"
 "#;
 
 /// Defines git_problems PATH, which prints why populate can't use the .git

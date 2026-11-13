@@ -2,6 +2,7 @@
 //! spec from anywhere else gets checked as well.  Messages are the same.
 
 use crate::spec::{Source, Spec};
+use serde_json::{Map, Value};
 use std::collections::BTreeMap;
 
 /// The spec's checks in the order checks.nix makes them, the first failing
@@ -15,25 +16,155 @@ pub fn spec(spec: &Spec) -> Result<(), String> {
     inputs(&spec.source)
 }
 
-/// The settings that are paths on the deploying machine, which populate
-/// passes to commands, must be absolute, as lib/types/populate.nix demands,
-/// so none can be taken for an option.
-pub fn settings(name: &str, source: &Source) -> Result<(), String> {
-    let keys: &[&str] = match source.kind.as_str() {
-        "file" => &["path"],
-        "pass" => &["dir"],
-        "pipe" => &["command"],
+/// What a setting holds.
+#[derive(Clone, Copy)]
+enum Kind {
+    Bool,
+    String,
+    /// A path starting with /, as lib.types.absolute-pathname and
+    /// lib.types.path demand.
+    Absolute,
+    Absolutes,
+    Strings,
+    /// git's clean, with exclude, a list of strings.
+    Clean,
+    /// file's filters, each with type include or exclude, and a pattern.
+    Filters,
+    /// Inputs drawn from other sources, each with follows, a string, and
+    /// inputs, again inputs.
+    Inputs,
+}
+
+/// The settings of each source type, as lib/types/populate.nix defines
+/// them, and whether a source needs them, because they have no default.
+fn known_settings(kind: &str) -> &'static [(&'static str, Kind, bool)] {
+    use Kind::*;
+    match kind {
+        "derivation" => &[("text", String, true)],
+        "file" => &[
+            ("path", Absolute, true),
+            ("useChecksum", Bool, false),
+            ("exclude", Strings, false),
+            ("filters", Filters, false),
+            ("deleteExcluded", Bool, false),
+            ("insecureLinks", Bool, false),
+            ("inputs", Inputs, false),
+            ("rewriteLock", Bool, false),
+        ],
+        "flake" => &[
+            ("url", String, true),
+            ("fetchOnTarget", Bool, false),
+            ("inputs", Inputs, false),
+            ("materialize", Bool, false),
+            ("patches", Absolutes, false),
+            ("rewriteLock", Bool, false),
+        ],
+        "flake-input" => &[
+            ("url", String, true),
+            ("name", String, true),
+            ("requireInputs", Bool, false),
+            ("fetchOnTarget", Bool, false),
+            ("inputs", Inputs, false),
+            ("materialize", Bool, false),
+            ("patches", Absolutes, false),
+            ("rewriteLock", Bool, false),
+        ],
+        "git" => &[
+            ("url", String, true),
+            ("ref", String, true),
+            ("clean", Clean, false),
+            ("fetchAlways", Bool, false),
+            ("shallow", Bool, false),
+            ("reclone", Bool, false),
+            ("inputs", Inputs, false),
+            ("rewriteLock", Bool, false),
+        ],
+        "pass" => &[("dir", Absolute, true), ("name", String, true)],
+        "passage" => &[
+            ("age", String, true),
+            ("dir", String, true),
+            ("identities_file", String, true),
+        ],
+        "pipe" => &[("command", Absolute, true)],
+        "symlink" => &[("target", String, true), ("inputs", Inputs, false)],
         _ => &[],
+    }
+}
+
+/// Whether value is what kind says.
+fn is_kind(value: &Value, kind: Kind) -> bool {
+    let absolute = |v: &Value| v.as_str().is_some_and(|s| s.starts_with('/'));
+    let strings = |v: &Value| {
+        v.as_array()
+            .is_some_and(|a| a.iter().all(|x| x.is_string()))
     };
-    for key in keys {
-        // A derivation's path is a string in the spec, like other paths.
-        let value = source.settings.get(*key).and_then(|v| v.as_str());
-        if !value.is_some_and(|v| v.starts_with('/')) {
+    let only = |o: &Map<String, Value>, keys: &[&str]| o.keys().all(|k| keys.contains(&k.as_str()));
+    match kind {
+        Kind::Bool => value.is_boolean(),
+        Kind::String => value.is_string(),
+        Kind::Absolute => absolute(value),
+        Kind::Absolutes => value.as_array().is_some_and(|a| a.iter().all(absolute)),
+        Kind::Strings => strings(value),
+        Kind::Clean => value
+            .as_object()
+            .is_some_and(|o| only(o, &["exclude"]) && o.get("exclude").map_or(true, strings)),
+        Kind::Filters => value.as_array().is_some_and(|a| {
+            a.iter().all(|f| {
+                f.as_object().is_some_and(|o| {
+                    only(o, &["type", "pattern"])
+                        && matches!(
+                            o.get("type").and_then(Value::as_str),
+                            None | Some("include" | "exclude")
+                        )
+                        && o.get("pattern").is_some_and(Value::is_string)
+                })
+            })
+        }),
+        Kind::Inputs => value.as_object().is_some_and(|inputs| {
+            inputs.values().all(|input| {
+                input.as_object().is_some_and(|o| {
+                    only(o, &["follows", "inputs"])
+                        && o.get("follows").map_or(true, Value::is_string)
+                        && o.get("inputs").map_or(true, |i| is_kind(i, Kind::Inputs))
+                })
+            })
+        }),
+    }
+}
+
+/// The settings of a source are those of its type, of the kinds
+/// lib/types/populate.nix demands, so a misspelt one doesn't go unnoticed,
+/// and paths populate passes to commands can't be taken for options.
+pub fn settings(name: &str, source: &Source) -> Result<(), String> {
+    let kind = &source.kind;
+    let known = known_settings(kind);
+    for key in source.settings.keys() {
+        if !known.iter().any(|(k, _, _)| k == key) {
             return Err(format!(
-                "krops: source {name}: the {key} of a {} source must be an absolute path, not {}",
-                source.kind,
-                value.map_or("missing".to_string(), quote)
+                "krops: source {name}: a {kind} source has no setting {key}"
             ));
+        }
+    }
+    for (key, setting, required) in known {
+        match source.settings.get(*key) {
+            None if *required => {
+                return Err(format!(
+                    "krops: source {name}: a {kind} source needs the setting {key}"
+                ))
+            }
+            None => {}
+            Some(value) if is_kind(value, *setting) => {}
+            Some(value) if matches!(setting, Kind::Absolute) && value.is_string() => {
+                return Err(format!(
+                    "krops: source {name}: the {key} of a {kind} source must be an absolute path, not {}",
+                    value
+                ))
+            }
+            Some(value) => {
+                return Err(format!(
+                    "krops: source {name}: the {key} of a {kind} source can't be {value}"
+                ))
+            }
         }
     }
     Ok(())
@@ -249,6 +380,27 @@ mod tests {
             super::spec(&spec(r#"{"path": "relative"}"#)).unwrap_err(),
             r#"krops: source x: the path of a file source must be an absolute path, not "relative""#
         );
+        assert_eq!(
+            super::spec(&spec(r#"{"path": "/src", "deleteExcludd": false}"#)).unwrap_err(),
+            "krops: source x: a file source has no setting deleteExcludd"
+        );
+        assert_eq!(
+            super::spec(&spec(r#"{"path": "/src", "useChecksum": "yes"}"#)).unwrap_err(),
+            r#"krops: source x: the useChecksum of a file source can't be "yes""#
+        );
+        assert_eq!(
+            super::spec(&spec("{}")).unwrap_err(),
+            "krops: source x: a file source needs the setting path"
+        );
+        assert!(super::spec(&spec(
+            r#"{"path": "/src", "filters": [{"type": "include", "pattern": "*.nix"}],
+                "inputs": {"a": {"follows": "x", "inputs": {"b": {"follows": "y"}}}}}"#
+        ))
+        .is_err_and(|e| e.contains("draws inputs")));
+        assert!(super::spec(&spec(
+            r#"{"path": "/src", "filters": [{"type": "x", "pattern": "*"}]}"#
+        ))
+        .is_err_and(|e| e.contains("filters")));
     }
 
     #[test]
