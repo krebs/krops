@@ -78,9 +78,16 @@ let
   '';
 
   # The path on the target, as populate names it in what it prints:
-  # prefixed by the host if the target isn't local.
+  # prefixed by the host if the target isn't local, and by the user as well
+  # if that isn't root.
   targetName = target: path:
-    optionalString (!isLocalTarget target) "${target.host}:" + path;
+    optionalString (!isLocalTarget target) (
+      optionalString
+        (!elem target.user [ null "" "root" ])
+        "${target.user}@" +
+      "${target.host}:"
+    ) +
+    path;
 
   # Shell code that removes the entries of the directory dir, a shell word,
   # that aren't named names.  find, unlike a loop reading names, copes with
@@ -92,14 +99,14 @@ let
   removeOthers = { dir, names, log ? null }: /* sh */ ''
     find ${dir} -mindepth 1 -maxdepth 1 \
         ${concatMapStringsSep " " (name: "! -name ${quote name}") names} \
-        -exec sh -c '
+        -exec sh -c ${quote /* sh */ ''
           ${optionalString (log != null) /* sh */ ''
             log=$1
             shift
           ''}
           for path; do
             ${optionalString (log != null) /* sh */ ''
-              >&2 printf "pruning %s/%s\n" "$log" "''${path##*/}"
+              >&2 printf "pruning '%s/%s'...\n" "$log" "''${path##*/}"
             ''}
             ${if log != null then /* sh */ ''
               rm -fR "$path"
@@ -113,7 +120,7 @@ let
               fi
             ''}
           done
-        ' sh ${optionalString (log != null) log} {} +
+        ''} sh ${optionalString (log != null) log} {} +
   '';
 
   # Shell code that removes a symlink at path, saying so, because the link
