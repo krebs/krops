@@ -307,6 +307,23 @@ mkdir /fixtures/git
 git clone -q --bare /fixtures/gitsrc /fixtures/git/gitsrc.git
 git -C /fixtures/git/gitsrc.git config uploadpack.allowReachableSHA1InWant true
 
+# withsub: a Git repository with gitsrc as its submodule sub, served by git
+# daemon like gitsrc, which the tests reach as git://deployer/gitsrc.git.
+mkdir /fixtures/withsub
+cat > /fixtures/withsub/.gitmodules <<'GIT'
+[submodule "sub"]
+	path = sub
+	url = git://deployer/gitsrc.git
+GIT
+(
+  cd /fixtures/withsub
+  git init -q -b master
+  git update-index --add --cacheinfo 160000,"$git_head",sub
+  git add .gitmodules
+  git commit -q -m withsub
+)
+git clone -q --bare /fixtures/withsub /fixtures/git/withsub.git
+
 # pass: password stores with x/a, without and with Git.
 if ! gpg --list-secret-keys spam@krebsco.de >/dev/null 2>&1; then
   gpg --batch --passphrase '' --quick-gen-key spam@krebsco.de default default never

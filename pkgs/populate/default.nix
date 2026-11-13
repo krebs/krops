@@ -157,14 +157,16 @@ let
     fi
   '';
 
-  # Shell code printing why populate can't use the .git directory of the
-  # Git work tree at path, or nothing.  A .git directory that git clone and
-  # populate made has no symlinks, no commondir file, which names another
-  # repository, no linked work trees, and only the configuration they write:
-  # the repository's format, the remote, branches, and submodules, whose
-  # repositories have their work tree in the work tree.
-  gitProblems = path: let
-    gitDir = "${path}/.git";
+  # Shell code defining git_problems PATH, which prints why populate can't
+  # use the .git directory of the Git work tree at PATH, or nothing.  A .git
+  # directory that git clone and populate made has no symlinks, no commondir
+  # file, which names another repository, no linked work trees, no hooks,
+  # and only the configuration they write: the repository's format, the
+  # remote, branches, and submodules, whose repositories have their work
+  # tree in the work tree.  And each .git below the work tree, which Git
+  # uses for a submodule there, is a file naming a repository in
+  # .git/modules.
+  gitProblems = let
     # Keys of the configuration git clone writes, as patterns of case.
     keys = [
       "core.repositoryformatversion" "core.filemode" "core.bare"
@@ -175,49 +177,81 @@ let
       "branch.*.remote" "branch.*.merge"
       "submodule.active" "submodule.*.url" "submodule.*.active"
     ];
-  in /* sh */ ''(
-    links=$(find ${quote gitDir} -type l | head -n 3 | paste -s -d ' ' -)
-    if test -n "$links"; then
-      printf '%s contains symlinks: %s' ${quote gitDir} "$links"
-      exit
-    fi
-    common=$(find ${quote gitDir} -name commondir | head -n 1)
-    if test -n "$common"; then
-      printf '%s names another repository' "$common"
-      exit
-    fi
-    if test -e ${quote gitDir}/worktrees; then
-      printf '%s has linked work trees' ${quote gitDir}
-      exit
-    fi
-    find ${quote gitDir} -name config -type f | while IFS= read -r config; do
-      command git config --file "$config" --list --name-only |
-      while IFS= read -r key; do
-        case $key in
-          ${concatStringsSep "|" keys}) ;;
-          core.worktree)
-            # Submodules' repositories have their work tree in the work tree.
-            worktree=$(command git config --file "$config" core.worktree)
-            dir=$(dirname "$config")
-            case $dir/$worktree in
-              ${quote gitDir}/modules/*)
-                resolved=$(cd "$dir" && cd "$worktree" 2>/dev/null && pwd -P) || :
-                case $resolved in
-                  "$(cd ${quote path} && pwd -P)"/*) continue ;;
-                esac
-                ;;
-            esac
-            printf '%s sets core.worktree to %s' "$config" "$worktree"
-            exit 1
-            ;;
-          *)
-            printf '%s sets %s, which neither git clone nor populate does' "$config" "$key"
-            exit 1
-            ;;
-        esac
-      done || exit 1
-    done || :
-  )'';
+  in /* sh */ ''
+    git_problems() (
+      path=$1
+      git_dir=$1/.git
+      links=$(find "$git_dir" -type l | head -n 3 | paste -s -d ' ' -)
+      if test -n "$links"; then
+        printf '%s contains symlinks: %s' "$git_dir" "$links"
+        exit
+      fi
+      common=$(find "$git_dir" -name commondir | head -n 1)
+      if test -n "$common"; then
+        printf '%s names another repository' "$common"
+        exit
+      fi
+      if test -e "$git_dir"/worktrees; then
+        printf '%s has linked work trees' "$git_dir"
+        exit
+      fi
+      if test -d "$git_dir"/hooks; then
+        hooks=$(find "$git_dir"/hooks -mindepth 1 ! -name '*.sample' | head -n 3 | paste -s -d ' ' -)
+        if test -n "$hooks"; then
+          printf '%s contains hooks: %s' "$git_dir" "$hooks"
+          exit
+        fi
+      fi
+      nested=$(
+        find "$path" -path "$git_dir" -prune -o -name .git -exec sh -c '
+          modules=$1
+          shift
+          for git; do
+            if ! test -L "$git" && test -f "$git"; then
+              gitdir=$(sed -n "s/^gitdir: //p" "$git")
+              resolved=$(cd "''${git%/.git}" && cd "$gitdir" 2>/dev/null && pwd -P) || :
+              case $resolved in
+                "$modules"/?*) continue ;;
+              esac
+            fi
+            printf "%s\n" "$git"
+          done
+        ' sh "$(cd "$git_dir" && pwd -P)/modules" {} + | head -n 1
+      )
+      if test -n "$nested"; then
+        printf '%s is not a file naming a repository in %s/modules' "$nested" "$git_dir"
+        exit
+      fi
+      find "$git_dir" -name config -type f | while IFS= read -r config; do
+        command git config --file "$config" --list --name-only |
+        while IFS= read -r key; do
+          case $key in
+            ${concatStringsSep "|" keys}) ;;
+            core.worktree)
+              # Submodules' repositories have their work tree in the work
+              # tree.
+              worktree=$(command git config --file "$config" core.worktree)
+              dir=$(dirname "$config")
+              case $dir/$worktree in
+                "$git_dir"/modules/*)
+                  resolved=$(cd "$dir" && cd "$worktree" 2>/dev/null && pwd -P) || :
+                  case $resolved in
+                    "$(cd "$path" && pwd -P)"/*) continue ;;
+                  esac
+                  ;;
+              esac
+              printf '%s sets core.worktree to %s' "$config" "$worktree"
+              exit 1
+              ;;
+            *)
+              printf '%s sets %s, which neither git clone nor populate does' "$config" "$key"
+              exit 1
+              ;;
+          esac
+        done || exit 1
+      done || :
+    )
+  '';
 
   check = { force, target }: let
     sentinelFile = "${target.path}/.populate";
@@ -1164,6 +1198,7 @@ let
     git() {
       command git -c core.hooksPath=/dev/null -c core.fsmonitor=false "$@"
     }
+    ${gitProblems}
     # Remove target path if it doesn't look like a git worktree.
     # This can happen e.g. when it had a different type earlier.  A work
     # tree that a symlink points to, or whose .git is a symlink or a file
@@ -1179,8 +1214,7 @@ let
     # whose .git directory has nothing like that, and else replaces it if
     # reclone is set, or fails, telling why.
     if test -e ${quote target.path}; then
-      # Not $((, which would be arithmetic.
-      if problems=$( ${gitProblems target.path} ); then :; else
+      if problems=$(git_problems ${quote target.path}); then :; else
         exit 1
       fi
       if test -n "$problems"; then

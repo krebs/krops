@@ -2104,6 +2104,66 @@ assert !(krops.isLocalTarget (targets.remote "/"));
         }
       ];
     }))
+    # A Git work tree whose submodule's .git, which Git uses as it finds it,
+    # isn't the gitfile git clone made, naming the repository in
+    # .git/modules: a repository of its own, whose configuration names a
+    # command, and a gitfile naming a repository elsewhere.
+    (s "git-submodule" (let
+      elsewhere = "/var/krops-elsewhere";
+      url = dirOf gitUrl + "/withsub.git";
+      git = reclone: { x.git = { inherit url reclone; ref = "master"; }; };
+      untouched = ''
+        test ! -e ${elsewhere}/ran || fail "a command in a .git directory ran"
+        expect_eq "HEAD elsewhere" "$(git -C ${elsewhere}/repo rev-parse HEAD)" ${gitFirst}
+      '';
+    in {
+      isolate = true;
+      prepare = ''
+        rm -fR ${elsewhere}
+        git clone -q ${gitUrl} ${elsewhere}/repo
+        git -C ${elsewhere}/repo checkout -q ${gitFirst}
+      '';
+      phases = [
+        {
+          sources = git false;
+          check = untouched + ''
+            expect_eq "sub HEAD" "$(git -C "$T"/x/sub rev-parse HEAD)" ${gitHead}
+          '';
+          mutate = ''
+            rm "$T"/x/sub/.git
+            cp -R "$T"/x/.git/modules/sub "$T"/x/sub/.git
+            git config --file "$T"/x/sub/.git/config --unset core.worktree
+            git config --file "$T"/x/sub/.git/config \
+                filter.x.smudge "touch ${elsewhere}/ran; cat"
+            echo '* filter=x' > "$T"/x/sub/.git/info/attributes
+            git -C "$T"/x/sub update-ref --no-deref HEAD ${gitFirst}
+            git -C "$T"/x/sub read-tree ${gitFirst}
+            rm "$T"/x/sub/two
+          '';
+        }
+        {
+          sources = git false;
+          expect.fail = "error: populate doesn't use the Git work tree";
+          check = untouched;
+          mutate = ''
+            rm -fR "$T"/x/sub
+            mkdir "$T"/x/sub
+            echo gitdir: ${elsewhere}/repo/.git > "$T"/x/sub/.git
+          '';
+        }
+        {
+          sources = git false;
+          expect.fail = "error: populate doesn't use the Git work tree";
+          check = untouched;
+        }
+        {
+          sources = git true;
+          check = untouched + ''
+            expect_eq "sub HEAD" "$(git -C "$T"/x/sub rev-parse HEAD)" ${gitHead}
+          '';
+        }
+      ];
+    }))
     # A ref that git fetch would take for an option: --upload-pack runs a
     # command where the repository is local.
     (s "git-ref-option" (let
