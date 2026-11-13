@@ -383,18 +383,23 @@ let
         ++ inputChecks from (drop (length parent) path);
     # Sets the positional parameters to nix flake lock's arguments for
     # drawing the inputs of the flake in source name from other sources.
+    # URLs get assigned first, so failing to find one stops the script,
+    # which a command substitution in an argument wouldn't: Nix would take
+    # the empty URL for the current directory.
     overrideArgs = name: /* sh */ ''
       set --
       ${concatMapStrings (x: /* sh */ ''
-        set -- "$@" --override-input ${quote (concatStringsSep "/" (drawnPath name x.path))} ${url (check name x.source)}
+        drawn_url=${url (check name x.source)}
+        set -- "$@" --override-input ${quote (concatStringsSep "/" (drawnPath name x.path))} "$drawn_url"
       '') (flakeFollows sources.${name})}
     '';
     # Rewrites the lock file of the flake in a file or git source in place.
     rewrite = name: /* sh */ ''
       (
         ${overrideArgs name}
+        own_url=$(flake_url ${quote name})
         own_lock "$(readlink -f ${quote "${target.path}/${name}"})"
-        nix flake lock "$@" "$(flake_url ${quote name})" >&2
+        nix flake lock "$@" "$own_url" >&2
       )
     '';
     # Derives what the target path of a flake or flake-input source gets from
@@ -489,8 +494,9 @@ let
           fi
           ${optionalString rewriteLock /* sh */ ''
             ${overrideArgs name}
+            own_url=$(flake_url ${quote name})
             own_lock ${quote targetPath}
-            nix flake lock "$@" "$(flake_url ${quote name})" >&2
+            nix flake lock "$@" "$own_url" >&2
           ''}
         '' else /* sh */ ''
           if test -e ${quote "${dir}/key"} &&
@@ -674,8 +680,9 @@ let
           ${concatMapStrings (x: /* sh */ ''
             set -- "$@" --override-input ${quote (concatStringsSep "/" x.path)} "path:$locks_dir"
           '') follows}
+          own_url=$(own_flake_url ${quote name})
           if ! nix flake metadata --json --no-write-lock-file "$@" \
-              "$(own_flake_url ${quote name})" > "$locks_dir"/${quote name}.json; then
+              "$own_url" > "$locks_dir"/${quote name}.json; then
             >&2 printf 'error: source %s draws inputs from other sources, but its flake can'"'"'t be locked\n' \
                 ${quote name}
             exit 1

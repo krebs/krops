@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Drawing an input from a source that isn't a directory stops populate,
+  instead of locking the flake with an empty URL, which Nix takes for the
+  current directory, copying it into the store: on a remote target, the
+  login directory.
 - Git can't take a `git` source's `url` or `ref`, or a `pass` source's
   `name`, for an option.
 - `git` sources also refuse work trees whose `.git` directory contains
