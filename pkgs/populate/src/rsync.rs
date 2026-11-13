@@ -150,7 +150,10 @@ fn insecure_links(context: &Context, config: &Config, source: &str) -> Result<bo
         .and_then(|line| line.split_whitespace().nth(2))
         .unwrap_or("")
         .to_string();
-    if !version_at_least(&version, "3.5.0") || !filtered(source) {
+    // Also with older versions of rsync, so a source that's missing, or
+    // that contains a directory find can't read, fails before rsync runs.
+    let filtered = filtered(source)?;
+    if !version_at_least(&version, "3.5.0") || !filtered {
         return Ok(false);
     }
     // A dry run of the same transfer, as far as filtering goes.
@@ -215,26 +218,24 @@ fn insecure_links(context: &Context, config: &Config, source: &str) -> Result<bo
 }
 
 /// Whether a .rsync-filter file applies to source: one therein, or in a
-/// directory above it.
-fn filtered(source: &str) -> bool {
+/// directory above it.  Fails, with find's message, if find fails.
+fn filtered(source: &str) -> Result<bool> {
     let found = run::output(Command::new("find").arg(source).args([
         "-name",
         ".rsync-filter",
         "-print",
         "-quit",
-    ]))
-    .map(|out| !out.is_empty())
-    .unwrap_or(false);
-    if found {
-        return true;
+    ]))?;
+    if !found.is_empty() {
+        return Ok(true);
     }
     let mut above = parent(source);
     loop {
         if Path::new(&above).join(".rsync-filter").exists() {
-            return true;
+            return Ok(true);
         }
         if above == "/" || above == "." {
-            return false;
+            return Ok(false);
         }
         above = parent(&above);
     }
