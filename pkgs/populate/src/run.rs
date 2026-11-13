@@ -359,25 +359,48 @@ pub fn output(command: &mut Command) -> Result<String> {
 }
 
 /// Whether the target is the machine populate runs on, as the user running
-/// it: its user is that user, and its host is localhost or the machine's
-/// name, like krops' lib's isLocalTarget decides during evaluation.
+/// it, like krops' lib's isLocalTarget decides during evaluation.
 fn is_local(target: &Target) -> bool {
-    let user = std::env::var("LOGNAME").ok();
-    let host = std::env::var("HOSTNAME").ok().or_else(host_name);
-    target.user == user && (target.host == "localhost" || Some(&target.host) == host.as_ref())
+    let etc_hostname = fs::read_to_string("/etc/hostname").ok();
+    is_local_with(
+        target,
+        std::env::var("LOGNAME").ok().as_deref(),
+        std::env::var("HOSTNAME").ok().as_deref(),
+        etc_hostname.as_deref(),
+    )
 }
 
-/// The machine's name, from /etc/hostname, as krops' lib reads it.
-fn host_name() -> Option<String> {
-    let text = fs::read_to_string("/etc/hostname").ok()?;
+/// is_local, given LOGNAME, HOSTNAME, and the contents of /etc/hostname.
+/// Like lib.maybeEnv, an empty variable counts as unset.  The user running
+/// populate is LOGNAME, if set, and the machine's name is HOSTNAME, or else
+/// the only line of /etc/hostname that is a label, or else localhost.  The
+/// target is local if its user is that user, and its host is that name or
+/// localhost.
+fn is_local_with(
+    target: &Target,
+    logname: Option<&str>,
+    hostname: Option<&str>,
+    etc_hostname: Option<&str>,
+) -> bool {
+    let user = logname.filter(|v| !v.is_empty());
+    let host = hostname
+        .filter(|v| !v.is_empty())
+        .map(str::to_string)
+        .or_else(|| etc_hostname.and_then(host_name))
+        .unwrap_or_else(|| "localhost".to_string());
+    target.user.as_deref() == user && (target.host == "localhost" || target.host == host)
+}
+
+/// The machine's name in the contents of /etc/hostname: its only line that
+/// is a label, as krops' lib reads it.
+fn host_name(text: &str) -> Option<String> {
     let label = |line: &&str| {
         !line.is_empty()
-            && line.len() <= 63
             && line.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
             && !line.starts_with('-')
             && !line.ends_with('-')
     };
-    let names: Vec<&str> = text.lines().filter(label).collect();
+    let names: Vec<&str> = text.split('\n').filter(label).collect();
     match names.as_slice() {
         [name] => Some(name.to_string()),
         _ => None,
@@ -399,6 +422,54 @@ mod tests {
         assert_eq!(quote(""), "''");
         assert_eq!(quote("a b"), "'a b'");
         assert_eq!(quote("it's"), r"'it'\''s'");
+    }
+
+    fn target(user: Option<&str>, host: &str) -> Target {
+        serde_json::from_value(serde_json::json!({
+            "user": user, "host": host, "path": "/var/src"
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn local_targets() {
+        let local = |t: &Target, logname, hostname, etc| is_local_with(t, logname, hostname, etc);
+        // An empty LOGNAME counts as unset, i.e. the user null.
+        assert!(local(&target(None, "localhost"), Some(""), None, None));
+        assert!(!local(&target(None, "localhost"), Some("tv"), None, None));
+        assert!(local(
+            &target(Some("tv"), "localhost"),
+            Some("tv"),
+            None,
+            None
+        ));
+        // An empty HOSTNAME counts as unset, so /etc/hostname names the host.
+        assert!(local(
+            &target(Some("tv"), "ni"),
+            Some("tv"),
+            Some(""),
+            Some("ni\n")
+        ));
+        assert!(local(
+            &target(Some("tv"), "ni"),
+            Some("tv"),
+            Some("ni"),
+            Some("other\n")
+        ));
+        assert!(!local(
+            &target(Some("tv"), "ni"),
+            Some("tv"),
+            None,
+            Some("a\nb\n")
+        ));
+        // Labels of any length, like lib.types.label.
+        let long = "x".repeat(64);
+        assert!(local(
+            &target(Some("tv"), &long),
+            Some("tv"),
+            None,
+            Some(&long)
+        ));
     }
 
     #[test]

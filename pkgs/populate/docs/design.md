@@ -153,9 +153,11 @@ places populate must not touch, check this after every phase.
 ## Execution
 
 Whether a target is local is what the target's `local` says, or, if
-that's null, gets decided when the program runs: it is, if its user is
-`LOGNAME` and its host is `localhost` or the host's name, from `HOSTNAME`
-or `/etc/hostname`.  `default.nix` decides during evaluation, like the other
+that's null, gets decided when the program runs, like krops' lib's
+`isLocalTarget` does: it is, if its user is `LOGNAME`, or null if that's
+empty or unset, and its host is `localhost` or the host's name, from
+`HOSTNAME`, or, if that's empty or unset, the only line of `/etc/hostname`
+that is a label.  `default.nix` decides during evaluation, like the other
 functions of krops.  For a local target, populate runs commands directly.
 
 For a remote target, populate runs commands over ssh, sharing one master
