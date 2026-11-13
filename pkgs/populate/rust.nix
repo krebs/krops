@@ -1,6 +1,6 @@
 # Populate's arguments, checked and as JSON, for the program in this
 # directory, which delivers the sources.
-{ coreutils, findutils, git, jq, nix, openssh, pass, passage, program, rsync
+{ coreutils, findutils, git, nix, openssh, pass, passage, program, rsync
 , writers
 }:
 
@@ -36,7 +36,7 @@ writers.writeDash "populate.${target.host}" /* sh */ ''
   echo + "$0" >&2
   # The tools populate depends on, in front of others of the same name.
   PATH=${makeBinPath [
-    rsync openssh git nix pass passage jq findutils coreutils
+    coreutils findutils git nix openssh pass passage rsync
   ]}''${PATH:+:$PATH}
   export PATH
   # On a file descriptor of its own, so the commands populate runs keep

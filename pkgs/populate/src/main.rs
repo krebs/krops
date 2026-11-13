@@ -3,6 +3,7 @@
 
 mod check;
 mod flake;
+mod flake_input;
 mod populate;
 mod rsync;
 mod run;

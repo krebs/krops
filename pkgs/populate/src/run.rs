@@ -102,6 +102,9 @@ pub struct Context {
     /// because Nix waits for its LocalCommand, which may not run over a
     /// multiplexed connection.
     pub ssh_nix: PathBuf,
+    /// What nix flake metadata prints for flakes, by reference, so it's
+    /// obtained only once, even if several sources use the same flake.
+    metadata: std::cell::RefCell<std::collections::BTreeMap<String, serde_json::Value>>,
 }
 
 impl Context {
@@ -127,6 +130,7 @@ impl Context {
             tmpdir,
             ssh,
             ssh_nix,
+            metadata: Default::default(),
         };
         context.write_ssh(&context.ssh, &context.ssh_options(true))?;
         context.write_ssh(&context.ssh_nix, &context.ssh_options(false))?;
@@ -229,6 +233,25 @@ impl Context {
         let mut command = self.shell(script, args);
         command.stdout(stderr());
         status(&mut command)
+    }
+
+    /// What nix flake metadata prints for the flake url, as get gets it,
+    /// once.
+    pub fn flake_metadata(
+        &self,
+        url: &str,
+        get: impl FnOnce() -> Result<String>,
+    ) -> Result<serde_json::Value> {
+        if let Some(metadata) = self.metadata.borrow().get(url) {
+            return Ok(metadata.clone());
+        }
+        let metadata: serde_json::Value = serde_json::from_str(&get()?).map_err(|e| {
+            Failure::Message(format!("error: can't read flake metadata of {url}: {e}"))
+        })?;
+        self.metadata
+            .borrow_mut()
+            .insert(url.to_string(), metadata.clone());
+        Ok(metadata)
     }
 
     /// Runs shell code on the target, returning its output.

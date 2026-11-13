@@ -17,7 +17,7 @@ if implementation == "shell" then
   }
 else if implementation == "rust" then
   import ./rust.nix {
-    inherit coreutils findutils git jq nix openssh pass passage rsync writers;
+    inherit coreutils findutils git nix openssh pass passage rsync writers;
     program = rustProgram;
   }
 else

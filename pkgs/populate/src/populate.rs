@@ -1,6 +1,7 @@
 //! Delivering the sources of a spec.
 
 use crate::flake;
+use crate::flake_input;
 use crate::rsync::{self, Config};
 use crate::run::{self, Context, Failure, Result};
 use crate::sh;
@@ -132,11 +133,7 @@ fn deliver(
             };
             rsync::transfer(context, &config, &out.to_string_lossy(), path)
         }
-        "flake" | "flake-input" => run::status(&mut run::local_shell(
-            &flake::flake_input(context, name, path, source),
-            &[],
-            &workdir,
-        )),
+        "flake" | "flake-input" => flake_input::deliver(context, name, path, source, &workdir),
         "git" => {
             let flag = |key| match settings.get(key).and_then(Value::as_bool) {
                 Some(true) => "1",

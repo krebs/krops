@@ -471,7 +471,8 @@ while read -r age_path; do
   mkdir -p "$(dirname "$pass_out")"
   if ! passage show "$pass_name" > "$pass_out" 2>&1; then
     echo ++ secrets "$host" show "$pass_name" >&2
-    jq -Rr 'select(test("^[^[]"))' "$pass_out" >&2
+    # What passage says, without age's progress lines.
+    grep '^[^[]' "$pass_out" >&2 || :
     exit 1
   fi
   touch -r "$age_path" "$pass_out"
@@ -532,4 +533,200 @@ pub fn prelude() -> String {
         REQUIRE_FLAKES,
     ]
     .concat()
+}
+
+/// Shell code for flake and flake-input sources on the target.  Each gets
+/// SENTINEL and NAME, the source's name, first, and the definitions of
+/// prelude.
+pub mod flake {
+    /// Defines remove_upload, which removes the directory receiving the
+    /// flake itself, and the directory of uploads once it's empty.
+    /// Sources get populated one after another, so no other source uses
+    /// that meanwhile.
+    pub const REMOVE_UPLOAD: &str = r#"
+remove_upload() {
+  remove_tree "$sentinel"/flake-uploads/"$name"
+  if test -d "$sentinel"/flake-uploads &&
+      test -z "$(ls -A "$sentinel"/flake-uploads)"; then
+    rmdir "$sentinel"/flake-uploads
+  fi
+}
+"#;
+
+    /// prepare_upload SENTINEL NAME: makes the directory receiving the
+    /// flake itself, or the patches if PATCHES isn't empty.
+    pub const PREPARE: &str = r#"
+sentinel=$1 name=$2 patches=$3
+use_state "$sentinel" "$name"
+if test -n "$patches"; then
+  mkdir -p "$sentinel"/patches
+else
+  remove_upload
+  mkdir -p "$sentinel"/flake-uploads/"$name"
+fi
+"#;
+
+    /// valid PATH: succeeds if the store has PATH.
+    pub const VALID: &str = r#"
+nix-store --check-validity "$1" 2>/dev/null
+"#;
+
+    /// archive PATH SUBDIR REQUIRE NAME HINT OVERRIDDEN...: prints what
+    /// nix flake archive prints for the flake in SUBDIR of the store path
+    /// PATH, with an empty flake in place of each input at an OVERRIDDEN
+    /// path, so Nix doesn't fetch them, or nothing if the flake has no
+    /// lock file, since locking would change it.  If its inputs can't be
+    /// archived, it fails if REQUIRE isn't empty, saying so for the source
+    /// NAME, with HINT appended, or else archives what Nix locks now, or
+    /// prints nothing, with a warning.
+    pub const ARCHIVE: &str = r#"
+path=$1 subdir=$2 require=$3 name=$4 hint=$5
+shift 5
+dir=$path${subdir:+/$subdir}
+if test -e "$dir"/flake.nix && test -e "$dir"/flake.lock; then
+  flake=path:$path${subdir:+?dir=$subdir}
+  empty=
+  if test $# -gt 0; then
+    empty=$(mktemp -d)
+    echo '{ outputs = _: {}; }' > "$empty"/flake.nix
+    n=$#
+    while test "$n" -gt 0; do
+      set -- "$@" --override-input "$1" "path:$empty"
+      shift
+      n=$((n - 1))
+    done
+  fi
+  if nix flake archive --json --no-update-lock-file "$@" "$flake"; then
+    :
+  elif test -n "$require"; then
+    >&2 printf 'error: source %s: the inputs its own lock file pins can'"'"'t be delivered%s\n' \
+        "$name" "$hint"
+    exit 1
+  # Without --no-update-lock-file, Nix adds what the lock file lacks.
+  elif nix flake archive --json --no-write-lock-file "$@" "$flake"; then
+    >&2 printf 'warning: source %s: its own lock file needs to be updated; delivering it with the inputs Nix locks now, which evaluating it may not use\n' \
+        "$name"
+  else
+    >&2 printf 'warning: source %s: the inputs its own lock file pins can'"'"'t be delivered; delivering it without them\n' \
+        "$name"
+  fi
+  if test -n "$empty"; then
+    rm -R "$empty"
+  fi
+fi
+"#;
+
+    /// link SENTINEL NAME LINK_PATH LINK_NAME DERIVED SUBDIR PATH ROOT...:
+    /// links the store path PATH, or SUBDIR therein, at LINK_PATH, and
+    /// registers it and the store paths ROOT as garbage collector roots of
+    /// the source NAME.  Roots get added before obsolete ones get removed,
+    /// so the inputs stay rooted.  LINK_NAME is LINK_PATH's name in
+    /// messages, and DERIVED isn't empty if LINK_PATH is in the source's
+    /// derived state.
+    pub const LINK: &str = r#"
+sentinel=$1 name=$2 link_path=$3 link_name=$4 derived=$5 subdir=$6 path=$7
+shift 7
+roots_dir=$sentinel/flake-inputs/$name
+use_state "$sentinel" "$name"
+if test -n "$derived"; then
+  mkdir -p "$(dirname "$link_path")"
+fi
+make_room_for_link "$link_path" "$link_name"
+nix-store --realise "$path" --add-root "$link_path" --indirect >/dev/null
+# The garbage collector follows the link into the store path.
+if test -n "$subdir"; then
+  ln -fns "$path/$subdir" "$link_path"
+fi
+# Left behind by an interrupted run, or not needed anymore.
+remove_upload
+mkdir -p "$roots_dir"
+roots=
+for path; do
+  root=$(basename "$path")
+  if test "$(readlink "$roots_dir"/"$root")" != "$path"; then
+    nix-store --realise "$path" --add-root "$roots_dir"/"$root" --indirect >/dev/null
+  fi
+  roots="$roots $root"
+done
+ls -A "$roots_dir" | while read -r root; do
+  case " $roots " in
+    *" $root "*) ;;
+    *) rm "$roots_dir"/"$root" ;;
+  esac
+done
+# An input without own inputs leaves the directory empty.
+if test -z "$roots"; then
+  rmdir "$roots_dir"
+  if test -z "$(ls -A "$sentinel"/flake-inputs)"; then
+    rmdir "$sentinel"/flake-inputs
+  fi
+fi
+"#;
+
+    /// fetch SENTINEL NAME URL INPUT SELECTED SELF EXPECTED: prints the
+    /// store path of what the selection SELECTED, as JSON, names, and the
+    /// subdirectory therein, on separate lines.  That's SELF, the flake
+    /// itself, which gets added from the upload directory unless the store
+    /// has it already, or EXPECTED, the store path the lock file pins it
+    /// to, if the store has it, or else what fetching it gets.  Inputs
+    /// referring to local paths can only be fetched if the target has them
+    /// as well.  URL and INPUT name the flake and the input in messages.
+    pub const FETCH: &str = r#"
+sentinel=$1 name=$2 url=$3 input=$4 selected=$5 self=$6 expected=$7
+upload=$sentinel/flake-uploads/$name
+if test -n "$self" && ! nix-store --check-validity "$self" 2>/dev/null; then
+  store_name=$(basename "$self" | cut -c34-)
+  mv "$upload"/tree "$upload"/"$store_name"
+  added=$(nix-store --add-fixed --recursive sha256 "$upload"/"$store_name")
+  remove_upload
+  if test "$added" != "$self"; then
+    >&2 printf 'error: flake %s arrived as %s instead of %s\n' \
+        "$url" "$added" "$self"
+    exit 1
+  fi
+fi
+# Fetching contacts where the input comes from even if the store has what
+# the lock file pins.
+if test -n "$expected" && ! nix-store --check-validity "$expected" 2>/dev/null; then
+  expected=
+fi
+FLAKE=$url INPUT=$input SELECTED=$selected SELF=$self EXPECTED=$expected \
+nix eval --impure --raw --expr '
+  let
+    selected = builtins.fromJSON (builtins.getEnv "SELECTED");
+    expected = builtins.getEnv "EXPECTED";
+    selectedPath =
+      if selected.self || expected != "" then null
+      else localPath selected.locked;
+    path =
+      if selected.self then builtins.getEnv "SELF"
+      else if expected != "" then expected
+      else (builtins.fetchTree selected.locked).outPath;
+    dir = path + (if selected.subdir == "" then "" else "/" + selected.subdir);
+    lock =
+      if builtins.pathExists (dir + "/flake.lock")
+        then builtins.fromJSON (builtins.readFile (dir + "/flake.lock"))
+        else { nodes = {}; };
+    localPath = locked:
+      if (locked.type or null) == "path" then locked.path
+      else let
+        match = builtins.match "file:(//)?(.*)" (locked.url or "");
+      in
+        if match == null then null else builtins.elemAt match 1;
+    missing = builtins.filter
+      (key: let
+        p = localPath (lock.nodes.${key}.locked or {});
+      in
+        p != null && builtins.substring 0 1 p == "/" && !builtins.pathExists p)
+      (builtins.attrNames lock.nodes);
+    key = builtins.head missing;
+  in
+    if selectedPath != null && builtins.substring 0 1 selectedPath == "/" && !builtins.pathExists selectedPath then
+      throw "flake ${builtins.getEnv "FLAKE"}: input ${builtins.getEnv "INPUT"} refers to ${selectedPath}, which does not exist on the target"
+    else if missing != [] then
+      throw "flake ${builtins.getEnv "FLAKE"}: input ${key} refers to ${localPath lock.nodes.${key}.locked}, which does not exist on the target"
+    else
+      path + "\n" + selected.subdir
+'
+"#;
 }
