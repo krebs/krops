@@ -333,8 +333,10 @@ everything else.  It doesn't change or remove anything outside:
   `git` source as well.
 
 * A `git` source only uses a work tree whose `.git` directory contains no
-  symlinks, no `commondir` file and no linked work trees, and only the
-  configuration that `git clone` and populate write.  Otherwise Git's
+  symlinks, no `commondir` file, no linked work trees, and no hooks, and
+  only the configuration that `git clone` and populate write, and in which
+  each `.git` of a submodule is a file naming a repository in
+  `.git/modules`.  Otherwise Git's
   commands could change what's elsewhere, or run commands, so populating
   fails, telling what's wrong, unless the source's `reclone` is set.  Git
   runs no hooks.

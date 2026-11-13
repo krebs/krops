@@ -244,10 +244,11 @@ ln -fnsT "$2" "$1"
 /// Defines git_problems PATH, which prints why populate can't use the .git
 /// directory of the Git work tree at PATH, or nothing.  A .git directory
 /// that git clone and populate made has no symlinks, no commondir file,
-/// which names another repository, no linked work trees, and only the
-/// configuration they write: the repository's format, the remote, branches,
-/// and submodules, whose repositories have their work tree in the work
-/// tree.
+/// which names another repository, no linked work trees, no hooks, and only
+/// the configuration they write: the repository's format, the remote,
+/// branches, and submodules, whose repositories have their work tree in the
+/// work tree.  And each .git below the work tree, which Git uses for a
+/// submodule there, is a file naming a repository in .git/modules.
 pub const GIT_PROBLEMS: &str = r#"
 git_problems() (
   path=$1
@@ -264,6 +265,33 @@ git_problems() (
   fi
   if test -e "$git_dir"/worktrees; then
     printf '%s has linked work trees' "$git_dir"
+    exit
+  fi
+  if test -d "$git_dir"/hooks; then
+    hooks=$(find "$git_dir"/hooks -mindepth 1 ! -name '*.sample' | head -n 3 | paste -s -d ' ' -)
+    if test -n "$hooks"; then
+      printf '%s contains hooks: %s' "$git_dir" "$hooks"
+      exit
+    fi
+  fi
+  nested=$(
+    find "$path" -path "$git_dir" -prune -o -name .git -exec sh -c '
+      modules=$1
+      shift
+      for git; do
+        if ! test -L "$git" && test -f "$git"; then
+          gitdir=$(sed -n "s/^gitdir: //p" "$git")
+          resolved=$(cd "${git%/.git}" && cd "$gitdir" 2>/dev/null && pwd -P) || :
+          case $resolved in
+            "$modules"/?*) continue ;;
+          esac
+        fi
+        printf "%s\n" "$git"
+      done
+    ' sh "$(cd "$git_dir" && pwd -P)/modules" {} + | head -n 1
+  )
+  if test -n "$nested"; then
+    printf '%s is not a file naming a repository in %s/modules' "$nested" "$git_dir"
     exit
   fi
   find "$git_dir" -name config -type f | while IFS= read -r config; do
