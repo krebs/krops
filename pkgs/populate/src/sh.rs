@@ -812,14 +812,19 @@ use_state "$@"
 
     /// resolve PATH...: prints, for each PATH, what's there and where it
     /// resolves to, as two fields, each ending in a null byte.  The first
-    /// holds d if PATH is a directory, g if it has .git, s if it has
-    /// .gitmodules, and f if it has flake.nix.
+    /// holds d if PATH is a directory, g if it has a .git directory that
+    /// git_problems finds nothing wrong with, s if it has .gitmodules, and
+    /// f if it has flake.nix.  Nix runs Git in a git+file: flake, with the
+    /// repository's configuration and hooks, so it only gets such ones.
     pub const RESOLVE: &str = r#"
 for path; do
   resolved=$(readlink -f "$path") || resolved=
   flags=
   if test -d "$path"; then flags=${flags}d; fi
-  if test -e "$path"/.git; then flags=${flags}g; fi
+  if ! test -L "$path"/.git && test -d "$path"/.git; then
+    problems=$(git_problems "$path" 2>/dev/null) || problems=failed
+    if test -z "$problems"; then flags=${flags}g; fi
+  fi
   if test -e "$path"/.gitmodules; then flags=${flags}s; fi
   if test -e "$path"/flake.nix; then flags=${flags}f; fi
   printf '%s\0%s\0' "$flags" "$resolved"

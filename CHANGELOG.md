@@ -11,6 +11,8 @@
 - `git` sources also refuse work trees whose `.git` directory contains
   hooks, or in which a submodule's `.git` isn't a file naming a repository
   in `.git/modules`, unless `reclone` is set.
+- Drawing inputs refers to a source in a Git work tree as `git+file:` only
+  if a `git` source would use its `.git` directory, and else as `path:`.
 - `git` sources with a branch or tag as `ref` follow it: populate fetches
   the branch or tag on every run, and resets the work tree to what it
   fetched.

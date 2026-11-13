@@ -2188,6 +2188,51 @@ assert !(krops.isLocalTarget (targets.remote "/"));
         }
       ];
     }))
+    # A .git that a materialized flake got, and one that a file source
+    # keeps, which Nix uses for the git+file: URL of the flake there: writing
+    # its lock file, Nix runs Git, with that repository's configuration.
+    (s "lock-foreign-git" (let
+      elsewhere = "/var/krops-elsewhere";
+      sources = alt // {
+        x.flake-input = {
+          url = "/fixtures/top"; name = "dep"; inherit fetchOnTarget;
+          materialize = true;
+          inputs.inner.follows = "alt";
+        };
+        y.file = {
+          path = "/fixtures/filesrc";
+          deleteExcluded = false;
+          filters = [ { type = "exclude"; pattern = "/.git"; } ];
+          inputs.dep.follows = "alt";
+        };
+      };
+    in {
+      isolate = true;
+      prepare = ''
+        rm -fR ${elsewhere}
+        mkdir -p ${elsewhere}
+      '';
+      phases = [
+        {
+          inherit sources;
+          # Repositories tracking only flake.nix, so the lock file changes.
+          mutate = ''
+            for name in x y; do
+              git -C "$T"/$name init -q
+              git -C "$T"/$name add flake.nix
+              git -C "$T"/$name -c user.name=x -c user.email=x@x commit -q -m x
+              git -C "$T"/$name config core.fsmonitor "touch ${elsewhere}/ran; false"
+            done
+          '';
+        }
+        {
+          inherit sources;
+          check = ''
+            test ! -e ${elsewhere}/ran || fail "a command in a .git directory ran"
+          '';
+        }
+      ];
+    }))
     # A file in populate's state replaced by a symlink to a file outside.
     (s "state-key" (let
       sources.x.flake-input = {

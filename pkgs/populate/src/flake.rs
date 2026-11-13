@@ -228,8 +228,9 @@ impl<'a> Flakes<'a> {
             String::new()
         };
         format!(
-            "{}{}{require}{snippet}",
+            "{}{}{}{require}{snippet}",
             sh::prelude(),
+            sh::GIT_PROBLEMS,
             sh::draw::DEFINITIONS
         )
     }
@@ -270,7 +271,8 @@ impl<'a> Flakes<'a> {
             .collect())
     }
 
-    /// The flake URL of the source named name, at resolved.
+    /// The flake URL of the source named name, at resolved: git+file: if
+    /// it has a .git directory populate can use, else path:.
     fn flake_url(name: &str, resolved: &Resolved) -> Result<String> {
         if !resolved.dir {
             return Err(Failure::Message(format!(
