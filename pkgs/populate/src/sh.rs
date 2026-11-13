@@ -352,24 +352,25 @@ if ! test -e "$path"; then
   if test -n "$shallow"; then
     git init "$path"
   else
-    git clone --recurse-submodules "$url" "$path"
+    git clone --recurse-submodules -- "$url" "$path"
   fi
 fi
 cd "$path"
 if ! origin=$(git config remote.origin.url); then
-  git remote add origin "$url"
+  git remote add -- origin "$url"
 elif test "$origin" != "$url"; then
-  git remote set-url origin "$url"
+  git remote set-url -- origin "$url"
 fi
 # A commit, given by its hash or a prefix thereof, gets fetched only if the
-# work tree lacks it, unless fetchAlways is set.  A branch or tag gets
+# work tree lacks it, unless fetchAlways is set.  After --, a ref can't be
+# taken for an option.  A branch or tag gets
 # fetched on every run, so the work tree follows it: resetting to its name
 # would reset to a local branch, which fetching doesn't move.
 fetch() {
   if test -n "$shallow"; then
-    git fetch --depth=1 origin "$1"
+    git fetch --depth=1 origin -- "$1"
   else
-    git fetch origin "$1"
+    git fetch origin -- "$1"
   fi
 }
 fetch_commit() {
@@ -418,7 +419,7 @@ pub mod local {
 dir=$1 name=$2
 if test -e "$dir"/.git; then
   printf '%s %s\n' "$name" "$(
-    git -C "$dir" log -1 --format=%H "$name"
+    git -C "$dir" log -1 --format=%H -- "$name"
     find "$dir"/"$name" -type l -exec realpath {} + |
       sort |
       xargs -r -n 1 git -C "$dir" log -1 --format=%H
@@ -446,7 +447,7 @@ while read -r gpg_path; do
   pass_name=$name/$rel_name
   pass_out=$PWD/$rel_name
   mkdir -p "$(dirname "$pass_out")"
-  PASSWORD_STORE_DIR=$dir pass show "$pass_name" > "$pass_out"
+  PASSWORD_STORE_DIR=$dir pass show -- "$pass_name" > "$pass_out"
   if [ -n "$pass_date" ]; then
     touch -d "$pass_date" "$pass_out"
   fi

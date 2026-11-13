@@ -2105,6 +2105,29 @@ assert !(krops.isLocalTarget (targets.remote "/"));
         }
       ];
     }))
+    # A ref that git fetch would take for an option: --upload-pack runs a
+    # command where the repository is local.
+    (s "git-ref-option" (let
+      elsewhere = "/var/krops-elsewhere";
+    in {
+      isolate = true;
+      prepare = ''
+        rm -fR ${elsewhere}
+        git clone -q --bare ${gitUrl} ${elsewhere}/repo.git
+      '';
+      phases = [
+        {
+          sources.x.git = {
+            url = "${elsewhere}/repo.git";
+            ref = "--upload-pack=touch ${elsewhere}/ran; git-upload-pack";
+          };
+          expect.fail = "invalid refspec";
+          check = ''
+            test ! -e ${elsewhere}/ran || fail "the ref ran a command"
+          '';
+        }
+      ];
+    }))
     # A file in populate's state replaced by a symlink to a file outside.
     (s "state-key" (let
       sources.x.flake-input = {
