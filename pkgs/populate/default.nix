@@ -77,6 +77,15 @@ let
     fi
   '';
 
+  # The path on the target, as rsync names it: prefixed by the user and host
+  # if the target isn't local.
+  targetName = target: path:
+    optionalString (!isLocalTarget target) (
+      (optionalString (target.user != "") "${target.user}@") +
+      "${target.host}:"
+    ) +
+    path;
+
   # Shell code that removes the entries of the directory dir, a shell word,
   # that aren't named names.  find, unlike a loop reading names, copes with
   # every name, e.g. ones that end in blanks or contain newlines.  Entries of
@@ -698,7 +707,8 @@ let
     ${removeOthers {
       dir = ".";
       names = attrNames sources ++ [ ".populate" ];
-      log = quote target.path;
+      # Like populating names the target.
+      log = quote (targetName target target.path);
     }}
     roots=.populate/flake-inputs
     if test -d "$roots"; then
@@ -1388,13 +1398,7 @@ let
         -rlptD \
         ${optionalString config.deleteExcluded /* sh */ "--delete-excluded"} \
         "$source_path" \
-        ${quote (
-          optionalString (!isLocalTarget target) (
-            (optionalString (target.user != "") "${target.user}@") +
-            "${target.host}:"
-          ) +
-          target.path
-        )} \
+        ${quote (targetName target target.path)} \
       >&2
   '';
 
