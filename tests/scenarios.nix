@@ -595,6 +595,40 @@ assert !(krops.isLocalTarget (targets.remote "/"));
       }
     ];
   })) targetKinds
+  # Branches and tags follow the server: a branch that moves between two
+  # deploys, and a tag, with full and shallow clones.
+  ++ concatMap (targetKind: map (shallow: scenario {
+    name = "git-${targetKind}-shallow${if shallow then "1" else "0"}-refs";
+    inherit targetKind;
+    prepareDeployer = ''
+      git -C /fixtures/git/gitsrc.git update-ref refs/heads/moving ${gitFirst}
+      git -C /fixtures/git/gitsrc.git update-ref refs/tags/first ${gitFirst}
+    '';
+    phases = [
+      {
+        sources.x.git = { url = gitUrl; ref = "moving"; inherit shallow; };
+        check = ''
+          expect_eq HEAD "$(git -C "$T"/x rev-parse HEAD)" ${gitFirst}
+        '';
+        mutateDeployer = ''
+          git -C /fixtures/git/gitsrc.git update-ref refs/heads/moving ${gitHead}
+        '';
+      }
+      {
+        sources.x.git = { url = gitUrl; ref = "moving"; inherit shallow; };
+        check = ''
+          expect_eq HEAD "$(git -C "$T"/x rev-parse HEAD)" ${gitHead}
+        '';
+      }
+      {
+        sources.x.git = { url = gitUrl; ref = "first"; inherit shallow; };
+        check = ''
+          expect_eq HEAD "$(git -C "$T"/x rev-parse HEAD)" ${gitFirst}
+        '';
+      }
+    ];
+  }) [ false true ]) targetKinds
+
   # A git source stops drawing inputs: its lock file, which Nix created and
   # staged, goes, so the work tree is as the commit has it.
   ++ map (targetKind: scenario {

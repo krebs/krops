@@ -560,7 +560,11 @@ Supported attributes:
   URL of the Git repository that should be fetched.
 
 * `ref` -
-  Branch / tag / commit that should be fetched.
+  Branch / tag / commit that should be fetched.  A branch or tag gets fetched
+  on every run, so the work tree follows it.  A commit, given by its hash or a
+  prefix thereof of at least four hex digits, only gets fetched if the work
+  tree lacks it, unless `fetchAlways` is set.  So a branch or tag whose name
+  consists of hex digits only counts as a commit.
 
 * `clean.exclude` -
   List of patterns that should be excluded from Git cleaning.

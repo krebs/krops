@@ -1209,25 +1209,32 @@ let
       git remote set-url origin ${quote source.url}
     fi
 
-    # TODO resolve git_ref to commit hash
-    hash=${quote source.ref}
-
-    if ! test "$(git log --format=%H -1)" = "$hash"; then
-      ${if source.fetchAlways then /* sh */ ''
-        ${if source.shallow then /* sh */ ''
-          git fetch --depth=1 origin "$hash"
-        '' else /* sh */ ''
-          git fetch origin
-        ''}
+    # A commit, given by its hash or a prefix thereof, gets fetched only if
+    # the work tree lacks it, unless fetchAlways is set.  A branch or tag
+    # gets fetched on every run, so the work tree follows it: resetting to
+    # its name would reset to a local branch, which fetching doesn't move.
+    ref=${quote source.ref}
+    fetch() {
+      ${if source.shallow then /* sh */ ''
+        git fetch --depth=1 origin "$1"
       '' else /* sh */ ''
-        if ! git log -1 "$hash" >/dev/null 2>&1; then
-          ${if source.shallow then /* sh */ ''
-            git fetch --depth=1 origin "$hash"
-          '' else /* sh */ ''
-            git fetch origin
-          ''}
-        fi
+        git fetch origin "$1"
       ''}
+    }
+    if printf %s "$ref" | grep -Eqx '[0-9a-f]{4,40}'; then
+      hash=$ref
+      if ! test "$(git log --format=%H -1)" = "$hash"; then
+        ${if source.fetchAlways then /* sh */ ''
+          ${if source.shallow then ''fetch "$hash"'' else "git fetch origin"}
+        '' else /* sh */ ''
+          if ! git log -1 "$hash" >/dev/null 2>&1; then
+            ${if source.shallow then ''fetch "$hash"'' else "git fetch origin"}
+          fi
+        ''}
+      fi
+    else
+      fetch "$ref"
+      hash=$(git rev-parse --verify 'FETCH_HEAD^{commit}')
     fi
     # Also if HEAD is there already: rewriting a lock file in place, e.g.,
     # changes the work tree, and stages the lock file if Nix created it.
