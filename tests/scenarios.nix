@@ -2312,6 +2312,48 @@ assert !(krops.isLocalTarget (targets.remote "/"));
         }
       ];
     }))
+    # A .git that a file source keeps, with configuration a git source would
+    # use, but a hook, which Nix's Git runs when it adds the lock file it
+    # writes: populate's Git runs none, so git sources keep hooks, but
+    # drawing inputs refers to the flake as path:.
+    (s "lock-hooks" (let
+      elsewhere = "/var/krops-elsewhere";
+      sources = alt // {
+        y.file = {
+          path = "/fixtures/filesrc";
+          deleteExcluded = false;
+          filters = [ { type = "exclude"; pattern = "/.git"; } ];
+          inputs.dep.follows = "alt";
+        };
+      };
+    in {
+      isolate = true;
+      prepare = ''
+        rm -fR ${elsewhere}
+        mkdir -p ${elsewhere}
+      '';
+      phases = [
+        {
+          inherit sources;
+          # A repository tracking only flake.nix, so Nix adds the lock file,
+          # which runs post-index-change.
+          mutate = ''
+            git -C "$T"/y init -q
+            git -C "$T"/y add flake.nix
+            git -C "$T"/y -c user.name=x -c user.email=x@x commit -q -m x
+            printf '#! /bin/sh\ntouch ${elsewhere}/ran\n' > "$T"/y/.git/hooks/post-index-change
+            chmod +x "$T"/y/.git/hooks/post-index-change
+          '';
+        }
+        {
+          inherit sources;
+          check = ''
+            test ! -e ${elsewhere}/ran || fail "a hook in a .git directory ran"
+            test -e "$T"/y/flake.lock || fail "y/flake.lock missing"
+          '';
+        }
+      ];
+    }))
     # A file in populate's state replaced by a symlink to a file outside.
     (s "state-key" (let
       sources.x.flake-input = {
