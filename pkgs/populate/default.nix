@@ -1347,6 +1347,7 @@ let
     target' = target // { path = "${target.path}/${name}"; };
   in writers.writeDash "populate.${target'.host}.${name}" ''
     set -efu
+    echo ${quote "populating '${target'.host}:${target'.path}'..."} >&2
     PWD=$TMPDIR/workdirs/${quote name}
     mkdir -p "$PWD"
     cd "$PWD"
@@ -1584,11 +1585,10 @@ writers.writeDash "populate.${target.host}" ''
   trap 'trap "" HUP INT TERM; exit 130' INT
   trap 'trap "" HUP INT TERM; exit 143' TERM
 
+  echo + "$0" >&2
   ${check { inherit force target; }}
-  set -x
   ${optionalString backup (do-backup { inherit target; })}
   ${concatStringsSep "\n" (mapAttrsToList (populate target) source)}
   ${flakes target source}
   ${optionalString prune (prune' target source)}
-
 ''
