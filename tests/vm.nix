@@ -158,6 +158,11 @@ in pkgs.testers.runNixOSTest {
                         f"env HOME=/root {phase['env']} timeout {limit} {phase['populate']} </dev/null 2>&1",
                         timeout=900,
                     )
+                    for unexpected in phase["unexpected"]:
+                        if unexpected in out:
+                            raise Exception(
+                                f"populate {i} prints {unexpected!r}:\n{out}"
+                            )
                     if phase["interrupt"] is not None:
                         if status != 124:
                             raise Exception(f"populate {i} ends on its own:\n{out}")

@@ -109,12 +109,14 @@ let
     # evaluation fail.  env sets environment variables for populate, as
     # arguments of env.  interrupt ends populate after that many seconds,
     # which it's expected not to finish before.  output lists what a
-    # succeeding populate is expected to print.  expect.fail is what a
+    # succeeding populate is expected to print, and unexpected what populate
+    # is expected not to print, succeeding or not.  expect.fail is what a
     # failing populate is expected to print, and expect.status, if given,
     # its exit status.
     phase = {
       sources, backup ? false, prune ? false, deploy ? null,
       targetPath ? path, env ? "", interrupt ? null, output ? [],
+      unexpected ? [],
       expect ? "success", control ? null, controlTargetPath ? null,
       check ? "", mutate ? null, checkDeployer ? null, mutateDeployer ? null,
     }: let
@@ -149,7 +151,7 @@ let
           null
       else {
         populate = toString (command sources targetPath);
-        inherit env interrupt output;
+        inherit env interrupt output unexpected;
         expect = if expect == "success" then null else expect.fail;
         status = if expect == "success" then null else expect.status or null;
         # No phase gets around checking the canaries.
@@ -1326,6 +1328,9 @@ assert !(krops.isLocalTarget (targets.remote "/"));
           p.pipe = "/fixtures/pipe";
         };
         expect.fail = "error: source p is not a directory";
+        # Locking the flake with an empty URL would lock the current
+        # directory, the login directory on a remote target.
+        unexpected = [ "while fetching the input" ];
       }];
     })
     (s "noinput-nested" {
