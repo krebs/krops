@@ -2,6 +2,8 @@
 name = "populate"
 version = "2.0.0-dev"
 edition = "2021"
+# The oldest version the dependencies support, as nixpkgs 23.11 has it.
+rust-version = "1.71"
 description = "Delivers sources to a target directory, as krops' populate"
 license = "WTFPL"
 publish = false

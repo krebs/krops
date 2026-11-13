@@ -497,8 +497,7 @@ impl<'a> Flakes<'a> {
         let fields = self.fields(sh::draw::DERIVED_STATE, false, &state_args)?;
         let malformed =
             || Failure::Message(format!("error: can't read the state of source {name}"));
-        let (head, rest) = fields.split_at_checked(4).ok_or_else(malformed)?;
-        let [original, key_file, result, target_kind] = head else {
+        let [original, key_file, result, target_kind, rest @ ..] = fields.as_slice() else {
             return Err(malformed());
         };
         let separator = rest
