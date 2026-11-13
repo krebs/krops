@@ -114,9 +114,9 @@ fn deliver(
             let file = fs::File::create(&out).map_err(|e| {
                 Failure::Message(format!("error: can't create {}: {e}", out.display()))
             })?;
+            // Through a shell, which runs a command without #! as a script.
             run::status(
-                Command::new(string(settings, "command")?)
-                    .current_dir(&workdir)
+                run::local_shell("\"$1\"\n", &[string(settings, "command")?], &workdir)
                     .stdout(file),
             )?;
             run::status(

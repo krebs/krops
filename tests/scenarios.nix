@@ -1176,6 +1176,19 @@ assert !(krops.isLocalTarget (targets.remote "/"));
         expect.fail = "error: flake /fixtures/top has no input nope";
       }];
     })
+    # A pipe command without #!, which a shell runs as a script.
+    (s "pipe-script" {
+      prepareDeployer = ''
+        printf 'echo piped\n' > /tmp/pipe-script
+        chmod +x /tmp/pipe-script
+      '';
+      phases = [{
+        sources.x.pipe = "/tmp/pipe-script";
+        check = ''
+          expect_eq x "$(cat "$T"/x)" piped
+        '';
+      }];
+    })
     # An input locked to a path the target doesn't have.
     (s "gone" {
       phases = [{
