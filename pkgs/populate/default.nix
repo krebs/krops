@@ -160,10 +160,10 @@ let
   # Shell code defining git_problems PATH, which prints why populate can't
   # use the .git directory of the Git work tree at PATH, or nothing.  A .git
   # directory that git clone and populate made has no symlinks, no commondir
-  # file, which names another repository, no linked work trees, no hooks,
-  # and only the configuration they write: the repository's format, the
-  # remote, branches, and submodules, whose repositories have their work
-  # tree in the work tree.  And each .git below the work tree, which Git
+  # file, which names another repository, no linked work trees, and only
+  # the configuration they write: the repository's format, the remote,
+  # branches, and submodules, whose repositories have their work tree in
+  # the work tree.  Hooks don't matter: populate's Git doesn't run them.  And each .git below the work tree, which Git
   # uses for a submodule there, is a file naming a repository in
   # .git/modules.
   gitProblems = let
@@ -194,13 +194,6 @@ let
       if test -e "$git_dir"/worktrees; then
         printf '%s has linked work trees' "$git_dir"
         exit
-      fi
-      if test -d "$git_dir"/hooks; then
-        hooks=$(find "$git_dir"/hooks -mindepth 1 ! -name '*.sample' | head -n 3 | paste -s -d ' ' -)
-        if test -n "$hooks"; then
-          printf '%s contains hooks: %s' "$git_dir" "$hooks"
-          exit
-        fi
       fi
       nested=$(
         find "$path" -path "$git_dir" -prune -o -name .git -exec sh -c '
@@ -616,9 +609,9 @@ let
 
         ${gitProblems}
         # Prints the flake URL of the source named $1: git+file: if it has a
-        # .git directory git_problems finds nothing wrong with, else path:.
-        # Nix runs Git in a git+file: flake, with the repository's
-        # configuration and hooks.
+        # .git directory git_problems finds nothing wrong with, and that has
+        # no hooks, else path:.  Nix runs Git in a git+file: flake, with the
+        # repository's configuration and hooks.
         flake_url() {
           path=$(readlink -f ${quote target.path}/"$1")
           if ! test -d "$path"; then
@@ -627,7 +620,8 @@ let
           fi
           if ! test -L "$path"/.git && test -d "$path"/.git &&
               problems=$(git_problems "$path" 2>/dev/null) &&
-              test -z "$problems"; then
+              test -z "$problems" &&
+              test -z "$(find "$path"/.git/hooks -mindepth 1 ! -name '*.sample' 2>/dev/null | head -n 1)"; then
             if test -e "$path"/.gitmodules; then
               printf 'git+file:%s?submodules=1' "$(url_path "$path")"
             else
