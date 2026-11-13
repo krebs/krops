@@ -522,7 +522,7 @@ require_flakes() {
 }
 "#;
 
-/// The definitions shell code generated for flakes uses.
+/// The definitions the shell code for flakes uses.
 pub fn prelude() -> String {
     [
         &use_state(),
@@ -728,5 +728,264 @@ nix eval --impure --raw --expr '
     else
       path + "\n" + selected.subdir
 '
+"#;
+}
+
+/// Shell code for drawing inputs of flakes in sources from other sources,
+/// and for deriving what flake and flake-input sources that get patched,
+/// get their lock files rewritten, or are materialized deliver.  Each gets
+/// the definitions of prelude and DEFINITIONS.  Populate decides what to
+/// do, from what these send back.
+pub mod draw {
+    /// Defines own_lock DIR, apply_patches PATCH_DIR NAME, and write_key
+    /// KEY_FILE KEY.
+    ///
+    /// Nix rewrites lock files in place, which also changes what else is a
+    /// hard link to the lock file, e.g. in a backup, or what it is a
+    /// symlink to.  So own_lock replaces the lock file of the flake in DIR
+    /// by a copy first.  The copy goes to a new file, so nothing that's
+    /// there already gets written through.
+    ///
+    /// apply_patches applies the patches in PATCH_DIR, in order, to the
+    /// working directory, failing, naming the patch and the source NAME, if
+    /// one doesn't apply.
+    ///
+    /// write_key writes KEY to a new file, which then replaces KEY_FILE, so
+    /// nothing at its place gets written through, e.g. a symlink.
+    pub const DEFINITIONS: &str = r#"
+own_lock() {
+  if test -e "$1"/flake.lock; then
+    own_lock_copy=$(mktemp "$1"/.flake.lock.XXXXXX)
+    cp -p "$1"/flake.lock "$own_lock_copy"
+    mv -f "$own_lock_copy" "$1"/flake.lock
+  fi
+}
+apply_patches() {
+  ls "$1" | while read -r patch; do
+    if ! patch -p1 -s --batch --no-backup-if-mismatch -i "$1"/"$patch" >&2; then
+      >&2 printf 'error: patch %s does not apply to source %s\n' \
+          "$(printf %s "$patch" | cut -c6-)" "$2"
+      exit 1
+    fi
+  done
+}
+write_key() {
+  key_file=$(mktemp "$1".XXXXXX)
+  printf '%s\n' "$2" > "$key_file"
+  mv -f "$key_file" "$1"
+}
+"#;
+
+    /// use_state SENTINEL NAME...
+    pub const USE_STATE: &str = r#"
+use_state "$@"
+"#;
+
+    /// resolve PATH...: prints, for each PATH, what's there and where it
+    /// resolves to, as two fields, each ending in a null byte.  The first
+    /// holds d if PATH is a directory, g if it has .git, s if it has
+    /// .gitmodules, and f if it has flake.nix.
+    pub const RESOLVE: &str = r#"
+for path; do
+  resolved=$(readlink -f "$path") || resolved=
+  flags=
+  if test -d "$path"; then flags=${flags}d; fi
+  if test -e "$path"/.git; then flags=${flags}g; fi
+  if test -e "$path"/.gitmodules; then flags=${flags}s; fi
+  if test -e "$path"/flake.nix; then flags=${flags}f; fi
+  printf '%s\0%s\0' "$flags" "$resolved"
+done
+"#;
+
+    /// metadata URL NAME OVERRIDE...: prints what nix flake metadata prints
+    /// for the flake at URL, of the source NAME, as Nix locks it now, with
+    /// an empty flake in place of each input at an OVERRIDE path, which
+    /// gets drawn from a source and may not be reachable as the flake's
+    /// lock file pins it.
+    pub const METADATA: &str = r#"
+url=$1 name=$2
+shift 2
+empty=$(mktemp -d)
+echo '{ outputs = _: {}; }' > "$empty"/flake.nix
+n=$#
+while test "$n" -gt 0; do
+  set -- "$@" --override-input "$1" "path:$empty"
+  shift
+  n=$((n - 1))
+done
+if ! nix flake metadata --json --no-write-lock-file "$@" "$url"; then
+  rm -R "$empty"
+  >&2 printf 'error: source %s draws inputs from other sources, but its flake can'"'"'t be locked\n' \
+      "$name"
+  exit 1
+fi
+rm -R "$empty"
+"#;
+
+    /// lock DIR URL ARG...: rewrites the lock file of the flake in DIR,
+    /// at URL, with nix flake lock's arguments ARG.
+    pub const LOCK: &str = r#"
+dir=$1 url=$2
+shift 2
+own_lock "$dir"
+nix flake lock "$@" "$url" >&2
+"#;
+
+    /// derived_state DIR TARGET_PATH PATCH_DIR DRAWN...: removes what an
+    /// interrupted run left in the source's derived state DIR, and prints
+    /// what tells whether the copy there needs to be made again, as fields
+    /// ending in null bytes: where DIR/original resolves to, the key of the
+    /// copy, the store path DIR/result links to, if the store has it, link
+    /// or directory, if TARGET_PATH is one, a line of sha256sum for each
+    /// patch in PATCH_DIR, an empty field, and the hash of each DRAWN path,
+    /// or nothing if it resolves into the store.
+    pub const DERIVED_STATE: &str = r#"
+dir=$1 target_path=$2 patch_dir=$3
+shift 3
+remove_tree "$dir"/work
+printf '%s\0' "$(readlink -f "$dir"/original)"
+if test -e "$dir"/key; then
+  printf '%s\0' "$(cat "$dir"/key)"
+else
+  printf '\0'
+fi
+if result=$(readlink "$dir"/result) &&
+    nix-store --check-validity "$result" 2>/dev/null; then
+  printf '%s\0' "$result"
+else
+  printf '\0'
+fi
+if test -L "$target_path"; then
+  printf 'link\0'
+elif test -d "$target_path"; then
+  printf 'directory\0'
+else
+  printf '\0'
+fi
+if test -n "$patch_dir"; then
+  ls "$patch_dir" | while read -r patch; do
+    printf '%s\0' "$(sha256sum "$patch_dir"/"$patch")"
+  done
+fi
+printf '\0'
+for drawn; do
+  drawn=$(readlink -f "$drawn")
+  case $drawn in
+    /nix/store/*) printf '\0' ;;
+    *) printf '%s\0' "$(nix-hash --type sha256 "$drawn")" ;;
+  esac
+done
+"#;
+
+    /// materialize ORIGINAL WORK TARGET_PATH TARGET_NAME PATCH_DIR NAME
+    /// KEY_FILE KEY: puts a copy of ORIGINAL, made in WORK and patched with
+    /// the patches in PATCH_DIR, if that isn't empty, at TARGET_PATH, and
+    /// writes its key.  TARGET_NAME is TARGET_PATH's name in messages, and
+    /// NAME the source's.
+    pub const MATERIALIZE: &str = r#"
+original=$1 work=$2 target_path=$3 target_name=$4 patch_dir=$5 name=$6
+key_file=$7 key=$8
+cp -R "$original" "$work"
+chmod -R u+w "$work"
+if test -n "$patch_dir"; then
+  (
+    cd "$work"
+    apply_patches "$patch_dir" "$name"
+  )
+fi
+remove_foreign_link "$target_path" "$target_name"
+rm -fR "$target_path"
+mv "$work" "$target_path"
+write_key "$key_file" "$key"
+"#;
+
+    /// add DIR PATH SUBDIR TARGET_PATH TARGET_NAME RESULT PATCH_DIR NAME
+    /// KEY ARG...: links SUBDIR of the store path RESULT at TARGET_PATH.
+    /// If RESULT is empty, that's a copy of the store path PATH, made in
+    /// the source's derived state DIR, patched with the patches in
+    /// PATCH_DIR, if that isn't empty, with the lock file of its flake in
+    /// SUBDIR rewritten with nix flake lock's arguments ARG, if any, and
+    /// added to the store, rooted by DIR/result, with its key in DIR/key.
+    /// TARGET_NAME is TARGET_PATH's name in messages, and NAME the
+    /// source's.
+    pub const ADD: &str = r#"
+dir=$1 path=$2 subdir=$3 target_path=$4 target_name=$5 result=$6
+patch_dir=$7 name=$8 key=$9
+shift 9
+if test -z "$result"; then
+  # The copy keeps the name of the store path.
+  mkdir "$dir"/work
+  work=$(readlink -f "$dir"/work)/$(basename "$path" | cut -c34-)
+  cp -R "$path" "$work"
+  chmod -R u+w "$work"
+  if test -n "$patch_dir"; then
+    (
+      cd "$work"/"$subdir"
+      apply_patches "$patch_dir" "$name"
+    )
+  fi
+  if test $# -gt 0; then
+    # Not just the path, which Nix takes for the enclosing Git work tree,
+    # if any.
+    nix flake lock "$@" "path:$(url_path "$work")${subdir:+?dir=$subdir}" >&2
+  fi
+  result=$(nix-store --add-fixed --recursive sha256 "$work")
+  remove_tree "$dir"/work
+  nix-store --realise "$result" --add-root "$dir"/result --indirect >/dev/null
+  write_key "$dir"/key "$key"
+fi
+make_room_for_link "$target_path" "$target_name"
+# The source's derived state roots the store path.
+ln -fns "$result${subdir:+/$subdir}" "$target_path"
+"#;
+
+    /// generate DIR TEXT: makes DIR a flake, with TEXT as its flake.nix,
+    /// and locks it.
+    pub const GENERATE: &str = r#"
+dir=$1 text=$2
+mkdir -p "$(dirname "$dir")"
+rm -fR "$dir"
+mkdir "$dir"
+cd "$dir"
+printf %s "$text" > flake.nix
+# Not just ., which Nix takes for the enclosing Git work tree, if any.
+nix flake lock "path:$(url_path "$(pwd -P)")" >&2
+"#;
+
+    /// clean_up SENTINEL NAMES NOT_FLAKES GENERATED DERIVED PATCHED: removes
+    /// the state sources don't need anymore.  Each argument after SENTINEL
+    /// is a list of source names, separated by blanks: of all sources, of
+    /// those that are neither flake nor flake-input sources, whose roots
+    /// for the garbage collector go, and of those that have a generated
+    /// flake, derived state, and patches.
+    pub const CLEAN_UP: &str = r#"
+sentinel=$1
+# The names are portable file names, so splitting them at blanks is fine.
+# shellcheck disable=SC2086
+use_state "$sentinel" $2
+# shellcheck disable=SC2086
+for name in $3; do
+  rm -fR "$sentinel"/flake-inputs/"$name"
+done
+if test -d "$sentinel"/flake-inputs &&
+    test -z "$(ls -A "$sentinel"/flake-inputs)"; then
+  rmdir "$sentinel"/flake-inputs
+fi
+remove_stale() {
+  stale_dir=$1
+  shift
+  if test -d "$stale_dir"; then
+    remove_others "$stale_dir" '' "$@"
+    if test -z "$(ls -A "$stale_dir")"; then
+      rmdir "$stale_dir"
+    fi
+  fi
+}
+# shellcheck disable=SC2086
+remove_stale "$sentinel"/flakes $4
+# shellcheck disable=SC2086
+remove_stale "$sentinel"/derived $5
+# shellcheck disable=SC2086
+remove_stale "$sentinel"/patches $6
 "#;
 }

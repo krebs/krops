@@ -34,7 +34,7 @@ pub fn populate(context: &Context, spec: &Spec) -> Result<()> {
         })?;
         deliver(context, name, source, &path, workdir)?;
     }
-    context.run(&flake::flakes(context, dir, &spec.source), &[])?;
+    flake::flakes(context, dir, &spec.source)?;
     if spec.prune {
         let flakes = spec
             .source

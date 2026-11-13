@@ -177,12 +177,12 @@ Populate runs rsync, Git, ssh, and Nix as programs, found in `PATH`.
 ## Status
 
 The program delivers all source types, draws inputs from sources, makes
-backups, and prunes.  Drawing inputs, in `src/flake.rs`, builds the same
-shell code that `shell.nix` generates, with every value quoted; it moves
-to Rust like delivering flake and flake-input sources did, in
-`src/flake_input.rs`, which reads what Nix prints as JSON itself, and runs
-fixed snippets on the target that send JSON or store paths back.
+backups, and prunes.  It decides what to do itself: the snippets it runs
+on the target send back what it needs to know, e.g. what Nix prints as
+JSON, where paths resolve to, or store paths.  Delivering flake and
+flake-input sources is in `src/flake_input.rs`, drawing inputs and
+deriving copies in `src/flake.rs`.
 
-The jq programs in `flake-jq.nix`, which the shell implementation and the
-jq test use, have equivalents in Rust, with the jq test's cases as unit
-tests.
+The jq programs and Nix functions in `flake-jq.nix`, which the shell
+implementation and the jq test use, have equivalents in Rust, with unit
+tests, among them the jq test's cases.
