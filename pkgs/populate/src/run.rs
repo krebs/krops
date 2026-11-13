@@ -15,8 +15,10 @@ use std::sync::atomic::{AtomicI32, Ordering};
 pub enum Failure {
     /// A message to print.
     Message(String),
-    /// A command failed, after printing why.
-    Command,
+    /// A command failed, after printing why, with its exit status, which
+    /// populate exits with: the shell implementation, running under set -e,
+    /// does, so e.g. 255 from ssh still tells a connection failure.
+    Command(u8),
     /// A signal arrived: SIGHUP, SIGINT, or SIGTERM.
     Signal(i32),
 }
@@ -25,7 +27,7 @@ impl fmt::Display for Failure {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             Failure::Message(message) => f.write_str(message),
-            Failure::Command => f.write_str("a command failed"),
+            Failure::Command(status) => write!(f, "a command failed with status {status}"),
             Failure::Signal(signal) => write!(f, "got signal {signal}"),
         }
     }
@@ -117,7 +119,7 @@ impl Context {
             .output()
             .map_err(|e| Failure::Message(format!("error: can't run mktemp: {e}")))?;
         if !output.status.success() {
-            return Err(Failure::Command);
+            return Err(failed(output.status));
         }
         let tmpdir = PathBuf::from(String::from_utf8_lossy(&output.stdout).trim_end());
         // Shared with the commands populate runs.
@@ -319,13 +321,25 @@ fn spawn_error(command: &Command, e: std::io::Error) -> Failure {
     ))
 }
 
+/// The failure of a command that exited with status, or, like in a shell,
+/// with 128 plus the signal that ended it.
+fn failed(status: ExitStatus) -> Failure {
+    use std::os::unix::process::ExitStatusExt;
+    let code = match (status.code(), status.signal()) {
+        (Some(code), _) => code,
+        (None, Some(signal)) => 128 + signal,
+        (None, None) => 1,
+    };
+    Failure::Command(u8::try_from(code).ok().filter(|c| *c != 0).unwrap_or(1))
+}
+
 /// Runs a command, failing if it fails, or if a signal arrived meanwhile.
 pub fn status(command: &mut Command) -> Result<()> {
     let result: std::io::Result<ExitStatus> = command.status();
     check_signal()?;
     match result {
         Ok(status) if status.success() => Ok(()),
-        Ok(_) => Err(Failure::Command),
+        Ok(status) => Err(failed(status)),
         Err(e) => Err(spawn_error(command, e)),
     }
 }
@@ -339,7 +353,7 @@ pub fn output(command: &mut Command) -> Result<String> {
         Ok(output) if output.status.success() => {
             Ok(String::from_utf8_lossy(&output.stdout).into_owned())
         }
-        Ok(_) => Err(Failure::Command),
+        Ok(output) => Err(failed(output.status)),
         Err(e) => Err(spawn_error(command, e)),
     }
 }

@@ -37,7 +37,11 @@ populate SPEC
 input.  Exit status:
 
 - 0: populate delivered all sources.
-- 1: a check of the spec failed, or delivering did.
+- 1: a check of the spec failed, or delivering did, with a message of its
+  own.
+- The exit status of the command that failed, if delivering failed with
+  that, like the shell implementation does: e.g. 255 if ssh can't reach
+  the target, or 128 if git fetch fails.
 - 2: the arguments are wrong, or the spec can't be read, isn't JSON, is of
   another version, or doesn't have the spec's shape.
 - 129, 130, 143: populate got SIGHUP, SIGINT, or SIGTERM, and stopped.

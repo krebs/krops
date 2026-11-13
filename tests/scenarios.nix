@@ -109,7 +109,9 @@ let
     # evaluation fail.  env sets environment variables for populate, as
     # arguments of env.  interrupt ends populate after that many seconds,
     # which it's expected not to finish before.  output lists what a
-    # succeeding populate is expected to print.
+    # succeeding populate is expected to print.  expect.fail is what a
+    # failing populate is expected to print, and expect.status, if given,
+    # its exit status.
     phase = {
       sources, backup ? false, prune ? false, deploy ? null,
       targetPath ? path, env ? "", interrupt ? null, output ? [],
@@ -149,6 +151,7 @@ let
         populate = toString (command sources targetPath);
         inherit env interrupt output;
         expect = if expect == "success" then null else expect.fail;
+        status = if expect == "success" then null else expect.status or null;
         # No phase gets around checking the canaries.
         check = script (check + "\ncanary_check\n");
         mutate = script mutate;
@@ -2252,6 +2255,14 @@ assert !(krops.isLocalTarget (targets.remote "/"));
         }
       ];
     }))
+    # populate exits with the status of the command that failed, here git
+    # fetch's.
+    (s "git-status" {
+      phases = [{
+        sources.x.git = { url = gitUrl; ref = "nonexistent"; };
+        expect = { fail = "couldn't find remote ref"; status = 128; };
+      }];
+    })
     # A .git that a materialized flake got, and one that a file source
     # keeps, which Nix uses for the git+file: URL of the flake there: writing
     # its lock file, Nix runs Git, with that repository's configuration.

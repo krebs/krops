@@ -78,7 +78,7 @@ fn exit(failure: run::Failure) -> ExitCode {
             eprintln!("{message}");
             ExitCode::FAILURE
         }
-        run::Failure::Command => ExitCode::FAILURE,
+        run::Failure::Command(status) => ExitCode::from(status),
         run::Failure::Signal(signal) => ExitCode::from(128 + signal as u8),
     }
 }
