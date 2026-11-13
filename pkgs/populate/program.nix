@@ -8,17 +8,18 @@ in
 rustPlatform.buildRustPackage {
   pname = cargoToml.package.name;
   inherit (cargoToml.package) version;
-  # Only what cargo builds from, so changes to the Nix files or the docs
-  # don't rebuild the program.
+  # Without what cargo doesn't build from, so changes to the Nix files or
+  # the docs don't rebuild the program.  By names, not by paths relative to
+  # this directory: the paths the filter gets needn't start with
+  # toString ./., e.g. if a symlink leads to this directory.
   src = builtins.path {
     name = "populate-src";
     path = ./.;
     filter = path: type: let
-      relative = builtins.substring
-        (builtins.stringLength (toString ./.) + 1) (-1) (toString path);
+      name = baseNameOf path;
     in
-      builtins.elem relative [ "Cargo.toml" "Cargo.lock" "src" ] ||
-      builtins.substring 0 4 relative == "src/";
+      !(builtins.elem name [ ".gitignore" "docs" "target" ] ||
+        builtins.match ".*\\.nix" name != null);
   };
   cargoLock.lockFile = ./Cargo.lock;
 }
