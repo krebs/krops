@@ -1352,7 +1352,7 @@ let
   populate = target: name: source: let
     source' = source.${source.type};
     target' = target // { path = "${target.path}/${name}"; };
-  in writers.writeDash "populate.${target'.host}.${name}" ''
+  in writers.writeDash "populate.${target'.host}.${name}" /* sh */ ''
     set -efu
     echo ${quote "populating '${targetName target' target'.path}'..."} >&2
     PWD=$TMPDIR/workdirs/${quote name}
@@ -1572,7 +1572,7 @@ in
 { backup ? false, force ? false, prune ? false, source, target }:
 assert checkTargetPath target.path;
 assert all checkSourceName (attrNames source);
-writers.writeDash "populate.${target.host}" ''
+writers.writeDash "populate.${target.host}" /* sh */ ''
   set -efu
 
   # Change to a private temporary directory to prevent collisions.
