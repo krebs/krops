@@ -2,6 +2,7 @@
 //! JSON file or - for standard input, says.  See docs/design.md.
 
 mod check;
+mod flake;
 mod populate;
 mod rsync;
 mod run;

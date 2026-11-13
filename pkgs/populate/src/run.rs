@@ -98,6 +98,10 @@ pub struct Context {
     /// The ssh command, with the options for the target and for sharing a
     /// master connection, as a script in tmpdir, for rsync's -e as well.
     pub ssh: PathBuf,
+    /// The ssh command for Nix's ssh:// store.  Without the control socket,
+    /// because Nix waits for its LocalCommand, which may not run over a
+    /// multiplexed connection.
+    pub ssh_nix: PathBuf,
 }
 
 impl Context {
@@ -113,31 +117,41 @@ impl Context {
             return Err(Failure::Command);
         }
         let tmpdir = PathBuf::from(String::from_utf8_lossy(&output.stdout).trim_end());
+        // Shared with the commands populate runs.
+        std::env::set_var("TMPDIR", &tmpdir);
         let ssh = tmpdir.join("ssh");
+        let ssh_nix = tmpdir.join("ssh-nix");
         let context = Context {
             target,
             local,
             tmpdir,
             ssh,
+            ssh_nix,
         };
-        let mut script = String::from("#!/bin/sh\nexec ssh");
-        for word in context.ssh_options() {
-            script.push(' ');
-            script.push_str(&quote(&word));
-        }
-        script.push_str(" \"$@\"\n");
-        let write = || -> std::io::Result<()> {
-            let mut file = fs::File::create(&context.ssh)?;
-            file.write_all(script.as_bytes())?;
-            fs::set_permissions(&context.ssh, fs::Permissions::from_mode(0o700))
-        };
-        write().map_err(|e| {
-            Failure::Message(format!("error: can't write {}: {e}", context.ssh.display()))
-        })?;
+        context.write_ssh(&context.ssh, &context.ssh_options(true))?;
+        context.write_ssh(&context.ssh_nix, &context.ssh_options(false))?;
         Ok(context)
     }
 
-    fn ssh_options(&self) -> Vec<String> {
+    /// Writes a script running ssh with options.  ssh is the one in PATH
+    /// now, so the script can be ssh in PATH itself, as for nix copy.
+    fn write_ssh(&self, path: &Path, options: &[String]) -> Result<()> {
+        let ssh = which("ssh").unwrap_or_else(|| PathBuf::from("ssh"));
+        let mut script = format!("#!/bin/sh\nexec {}", quote(&ssh.to_string_lossy()));
+        for word in options {
+            script.push(' ');
+            script.push_str(&quote(word));
+        }
+        script.push_str(" \"$@\"\n");
+        let write = || -> std::io::Result<()> {
+            let mut file = fs::File::create(path)?;
+            file.write_all(script.as_bytes())?;
+            fs::set_permissions(path, fs::Permissions::from_mode(0o700))
+        };
+        write().map_err(|e| Failure::Message(format!("error: can't write {}: {e}", path.display())))
+    }
+
+    fn ssh_options(&self, shared: bool) -> Vec<String> {
         let mut options = Vec::new();
         if let Some(user) = &self.target.user {
             options.extend(["-l".to_string(), user.clone()]);
@@ -145,11 +159,13 @@ impl Context {
         if let Some(port) = &self.target.port {
             options.extend(["-p".to_string(), port.clone()]);
         }
-        let control_path = format!("ControlPath={}/ssh-%r@%h:%p.sock", self.tmpdir.display());
-        for option in ["ControlMaster=auto", &control_path, "ControlPersist=1h"] {
-            options.extend(["-o".to_string(), option.to_string()]);
+        if shared {
+            let control_path = format!("ControlPath={}/ssh-%r@%h:%p.sock", self.tmpdir.display());
+            for option in ["ControlMaster=auto", &control_path, "ControlPersist=1h"] {
+                options.extend(["-o".to_string(), option.to_string()]);
+            }
+            options.push("-T".to_string());
         }
-        options.push("-T".to_string());
         options.extend(self.target.extra_options.iter().cloned());
         options
     }
@@ -252,6 +268,16 @@ pub fn local_shell(script: &str, args: &[&str], dir: &Path) -> Command {
         .args(args)
         .current_dir(dir);
     command
+}
+
+/// The program named name in PATH.
+fn which(name: &str) -> Option<PathBuf> {
+    let path = std::env::var_os("PATH")?;
+    std::env::split_paths(&path)
+        .map(|dir| dir.join(name))
+        .find(|file| {
+            fs::metadata(file).is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+        })
 }
 
 /// Where populate's errors go, for commands whose output goes there too.

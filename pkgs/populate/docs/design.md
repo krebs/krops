@@ -176,7 +176,12 @@ Populate runs rsync, Git, ssh, and Nix as programs, found in `PATH`.
 
 ## Status
 
-The program delivers `derivation`, `file`, `git`, `pass`, `passage`,
-`pipe`, and `symlink` sources, makes backups, and prunes.  Given `flake`
-or `flake-input` sources, or sources drawing inputs from others, it fails
-before changing anything, saying that these aren't implemented yet.
+The program delivers all source types, draws inputs from sources, makes
+backups, and prunes.  The code for flakes, in `src/flake.rs`, builds the
+same shell code that `shell.nix` generates, with every value quoted, so
+both implementations behave alike; it moves to Rust piece by piece, with
+the scenarios telling whether it still behaves alike.
+
+The jq programs in `flake-jq.nix`, which the shell implementation and the
+jq test use, have equivalents in Rust, with the jq test's cases as unit
+tests.

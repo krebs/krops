@@ -483,3 +483,53 @@ done
 pub const PASS_INFO: &str = r#"
 cat "$1"/.pass_info || :
 "#;
+
+/// Defines url_path PATH, which prints PATH as it goes into a URL: with
+/// every byte percent-encoded that isn't a letter, a digit, or one of
+/// -._~/.  Nix decodes that, and otherwise takes, e.g., ? and # for
+/// delimiters, and refuses blanks.
+pub const URL_PATH: &str = r#"
+url_path() {
+  printf %s "$1" | od -An -v -tx1 | tr -s ' ' '\n' |
+  while read -r url_byte; do
+    case $url_byte in
+      "") ;;
+      2[d-f]|3[0-9]|4[1-9a-f]|5[0-9a]|5f|6[1-9a-f]|7[0-9a]|7e)
+        printf "\\$(printf %o "0x$url_byte")"
+        ;;
+      *)
+        printf '%%%s' "$url_byte"
+        ;;
+    esac
+  done
+}
+"#;
+
+/// Defines require_flakes WHAT, which enables flakes for the Nix commands
+/// following it, and fails unless Nix supports them, i.e. is version 2.4 or
+/// later.  WHAT names what needs flakes, for the error message.
+pub const REQUIRE_FLAKES: &str = r#"
+require_flakes() {
+  NIX_CONFIG=$(printf '%s\n%s' "${NIX_CONFIG-}" \
+      'extra-experimental-features = nix-command flakes')
+  export NIX_CONFIG
+  if ! nix flake --help >/dev/null 2>&1; then
+    >&2 printf 'error: %s needs Nix 2.4 or later on %s, found: %s\n' \
+        "$1" "$(uname -n)" "$(nix --version 2>&1 || :)"
+    exit 1
+  fi
+}
+"#;
+
+/// The definitions shell code generated for flakes uses.
+pub fn prelude() -> String {
+    [
+        &use_state(),
+        REMOVE_TREE,
+        LINKS,
+        REMOVE_OTHERS,
+        URL_PATH,
+        REQUIRE_FLAKES,
+    ]
+    .concat()
+}

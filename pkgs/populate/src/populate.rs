@@ -1,5 +1,6 @@
 //! Delivering the sources of a spec.
 
+use crate::flake;
 use crate::rsync::{self, Config};
 use crate::run::{self, Context, Failure, Result};
 use crate::sh;
@@ -13,7 +14,7 @@ use std::process::Command;
 /// prunes if asked.
 pub fn populate(context: &Context, spec: &Spec) -> Result<()> {
     let dir = &spec.target.path;
-    unsupported(context, spec)?;
+    refuse_copying_with_sudo(context, spec)?;
     let sentinel = format!("{dir}/.populate");
     let force = if spec.force { "1" } else { "" };
     context.run(
@@ -30,8 +31,9 @@ pub fn populate(context: &Context, spec: &Spec) -> Result<()> {
         fs::create_dir_all(&workdir).map_err(|e| {
             Failure::Message(format!("error: can't create {}: {e}", workdir.display()))
         })?;
-        deliver(context, source, &path, workdir)?;
+        deliver(context, name, source, &path, workdir)?;
     }
+    context.run(&flake::flakes(context, dir, &spec.source), &[])?;
     if spec.prune {
         let flakes = spec
             .source
@@ -49,9 +51,10 @@ pub fn populate(context: &Context, spec: &Spec) -> Result<()> {
     Ok(())
 }
 
-/// Fails, before changing anything, if the spec needs what this program
-/// doesn't do yet.
-fn unsupported(context: &Context, spec: &Spec) -> Result<()> {
+/// Fails, before changing anything, if flakes would get copied to a remote
+/// target using sudo, which nix copy doesn't support: it logs in as the
+/// target's user.
+fn refuse_copying_with_sudo(context: &Context, spec: &Spec) -> Result<()> {
     for (name, source) in &spec.source {
         let copying = matches!(source.kind.as_str(), "flake" | "flake-input")
             && source
@@ -63,21 +66,6 @@ fn unsupported(context: &Context, spec: &Spec) -> Result<()> {
             return Err(Failure::Message(format!(
                 "krops: source {}/{name}: copying flakes to targets with sudo is not supported",
                 spec.target.path
-            )));
-        }
-    }
-    for source in spec.source.values() {
-        let what = match source.kind.as_str() {
-            "derivation" | "file" | "git" | "pass" | "passage" | "pipe" | "symlink" => None,
-            kind => Some(format!("{kind} sources")),
-        };
-        let what = what.or_else(|| {
-            (!source.follows().is_empty()).then(|| "drawing inputs from sources".to_string())
-        });
-        if let Some(what) = what {
-            return Err(Failure::Message(format!(
-                "populate: {what} aren't implemented yet, so it delivers nothing to {}",
-                context.name(&spec.target.path)
             )));
         }
     }
@@ -93,7 +81,13 @@ fn string<'a>(settings: &'a Map<String, Value>, key: &str) -> Result<&'a str> {
 
 /// Delivers a source to path on the target, using workdir for files it
 /// prepares on the deploying machine.
-fn deliver(context: &Context, source: &Source, path: &str, workdir: PathBuf) -> Result<()> {
+fn deliver(
+    context: &Context,
+    name: &str,
+    source: &Source,
+    path: &str,
+    workdir: PathBuf,
+) -> Result<()> {
     let settings = &source.settings;
     match source.kind.as_str() {
         "derivation" => context.run(
@@ -138,6 +132,11 @@ fn deliver(context: &Context, source: &Source, path: &str, workdir: PathBuf) -> 
             };
             rsync::transfer(context, &config, &out.to_string_lossy(), path)
         }
+        "flake" | "flake-input" => run::status(&mut run::local_shell(
+            &flake::flake_input(context, name, path, source),
+            &[],
+            &workdir,
+        )),
         "git" => {
             let flag = |key| match settings.get(key).and_then(Value::as_bool) {
                 Some(true) => "1",
@@ -209,8 +208,9 @@ fn deliver(context: &Context, source: &Source, path: &str, workdir: PathBuf) -> 
             )
         }
         "symlink" => context.run(sh::SYMLINK, &[path, string(settings, "target")?]),
+        // The spec's types are all of the above.
         kind => Err(Failure::Message(format!(
-            "populate: {kind} sources aren't implemented yet"
+            "populate: unknown source type {kind}"
         ))),
     }
 }
