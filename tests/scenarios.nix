@@ -1176,6 +1176,18 @@ assert !(krops.isLocalTarget (targets.remote "/"));
         expect.fail = "error: flake /fixtures/top has no input nope";
       }];
     })
+    # rsync's log gives sizes in units of 1024, as %'''l asks for.
+    (s "rsync-units" {
+      prepareDeployer = ''
+        rm -fR /tmp/rsync-units
+        mkdir /tmp/rsync-units
+        head -c 2048 /dev/zero > /tmp/rsync-units/f
+      '';
+      phases = [{
+        sources.x.file = "/tmp/rsync-units";
+        output = [ "/2.00K" ];
+      }];
+    })
     # A pipe command without #!, which a shell runs as a script.
     (s "pipe-script" {
       prepareDeployer = ''
@@ -1189,6 +1201,45 @@ assert !(krops.isLocalTarget (targets.remote "/"));
         '';
       }];
     })
+    # A pass source gets decrypted again only when the last commit of its
+    # passwords changes, which .pass_info records.
+    (s "pass-changes" (let
+      sources.x.pass = { dir = "/tmp/pass-changes"; name = "x"; };
+    in {
+      prepareDeployer = ''
+        rm -fR /tmp/pass-changes
+        cp -R /fixtures/pass-git /tmp/pass-changes
+      '';
+      phases = [
+        {
+          inherit sources;
+          check = ''
+            expect_eq a "$(cat "$T"/x/a)" secret-a
+          '';
+          mutate = ''
+            echo local-change > "$T"/x/a
+          '';
+        }
+        {
+          inherit sources;
+          check = ''
+            expect_eq a "$(cat "$T"/x/a)" local-change
+          '';
+          mutateDeployer = ''
+            export GIT_AUTHOR_NAME=krops GIT_AUTHOR_EMAIL=spam@krebsco.de
+            export GIT_COMMITTER_NAME=krops GIT_COMMITTER_EMAIL=spam@krebsco.de
+            printf 'secret-b\n' |
+              PASSWORD_STORE_DIR=/tmp/pass-changes pass insert -m -f x/a >/dev/null
+          '';
+        }
+        {
+          inherit sources;
+          check = ''
+            expect_eq a "$(cat "$T"/x/a)" secret-b
+          '';
+        }
+      ];
+    }))
     # An input locked to a path the target doesn't have.
     (s "gone" {
       phases = [{
