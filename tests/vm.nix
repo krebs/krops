@@ -150,10 +150,12 @@ in pkgs.testers.runNixOSTest {
                     run(deployer, f"sh {scenario['prepareDeployer']}")
                 run(node, f"sh {scenario['prepare']}")
                 for i, phase in enumerate(scenario["phases"]):
-                    # A hang fails the scenario, not the whole test.
+                    # A hang fails the scenario, not the whole test.  The
+                    # input is the console the test driver talks through,
+                    # a terminal, which ssh -t would take over.
                     limit = phase["interrupt"] or 600
                     status, out = deployer.execute(
-                        f"env HOME=/root {phase['env']} timeout {limit} {phase['populate']} 2>&1",
+                        f"env HOME=/root {phase['env']} timeout {limit} {phase['populate']} </dev/null 2>&1",
                         timeout=900,
                     )
                     if phase["interrupt"] is not None:
