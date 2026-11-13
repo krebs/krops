@@ -707,7 +707,10 @@ drawing an input from a source with a generated flake uses that flake.
 automatically.
 
 Sources in a Git work tree are referred to as `git+file:` (with submodules if
-there are any), all other sources as `path:`, with symlinks resolved.  Lock
+there are any), all other sources as `path:`, with symlinks resolved.  Nix
+runs Git in a `git+file:` flake, so that's only for work trees whose `.git`
+directory a `git` source would use, see
+[The target directory](#the-target-directory).  Lock
 files get rewritten or generated on every run, so they match the sources.
 Copies of `flake` and `flake-input` sources get made again only if the
 delivered store path, the patches, or the sources they draw inputs from

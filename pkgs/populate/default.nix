@@ -608,14 +608,20 @@ let
           fi
         }
 
-        # Prints the flake URL of the source named $1.
+        ${gitProblems}
+        # Prints the flake URL of the source named $1: git+file: if it has a
+        # .git directory git_problems finds nothing wrong with, else path:.
+        # Nix runs Git in a git+file: flake, with the repository's
+        # configuration and hooks.
         flake_url() {
           path=$(readlink -f ${quote target.path}/"$1")
           if ! test -d "$path"; then
             >&2 printf 'error: source %s is not a directory\n' "$1"
             exit 1
           fi
-          if test -e "$path"/.git; then
+          if ! test -L "$path"/.git && test -d "$path"/.git &&
+              problems=$(git_problems "$path" 2>/dev/null) &&
+              test -z "$problems"; then
             if test -e "$path"/.gitmodules; then
               printf 'git+file:%s?submodules=1' "$(url_path "$path")"
             else
