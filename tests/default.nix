@@ -4,8 +4,11 @@
 # Build all with nix-build tests, or one with, e.g., nix-build tests -A flake.
 # The exhaustive tests add the combinations of options that no code path
 # tells apart from the ones the others cover; build them with nix-build tests
-# -A exhaustive, or one with, e.g., nix-build tests -A exhaustive.flake.  jq runs populate's jq programs for flakes
-# without VMs.
+# -A exhaustive, or one with, e.g., nix-build tests -A exhaustive.flake.
+# The smoke test runs a few scenarios covering each source type and each kind
+# of target in a single VM test, for checking changes quickly; build it with
+# nix-build tests -A smoke.  jq runs populate's jq programs for flakes without
+# VMs.
 { pkgs ? import ../pkgs {} }:
 
 let
@@ -46,8 +49,48 @@ let
       (builtins.mapAttrs
         (_: builtins.filter (scenario: scenario.exhaustive == exhaustive))
         scenarios));
+
+  # Names of the scenarios of the smoke test.
+  smokeNames = [
+    "file-local-checksum0-deleteExcluded0-filters0-inputsnone"
+    "file-sudo-checksum0-deleteExcluded0-filters1-inputsnone"
+    "git-remote-cleanExclude0-fetchAlways0-inputsnone-shallow0"
+    "git-local-shallow1-refs"
+    "symlink-local-absolute0-inputs0"
+    "pass-remote-storepass"
+    "passage-sudo-agedefault-dirstore"
+    "pipe-local"
+    "derivation-remote"
+    "flake-local-fetchOnTarget0-inputsrewrite-kindgit-materialize0"
+    "flake-sudo-fetchOnTarget1-inputsnone-kindgit-materialize0"
+    "flake-input-dep-remote-fetchOnTarget0-inputsgenerated-materialize0"
+    "flake-input-sub-local-fetchOnTarget0-materialize0"
+    "state-sentinel-local"
+    "prune-remote"
+    "names-local"
+    "paths-local"
+    "deploy-local-buildTarget0-etcFlake0-flakefile"
+    "deploy-sudo-allocateTTY"
+  ];
+  smokeScenarios = let
+    all = pkgs.lib.concatLists (builtins.attrValues scenarios);
+    selected = builtins.filter (scenario: builtins.elem scenario.name smokeNames) all;
+    missing = pkgs.lib.subtractLists (map (scenario: scenario.name) selected) smokeNames;
+  in
+    if missing != [] then
+      throw "tests: smoke test names missing scenarios: ${toString missing}"
+    else
+      selected;
 in
   testsOf false ""
+  # Not built by nix-build tests either, which runs these scenarios anyway.
+  // {
+    smoke.smoke = import ./vm.nix {
+      inherit pkgs gitHead;
+      name = "smoke";
+      scenarios = smokeScenarios;
+    };
+  }
   # An attribute set without recurseForDerivations, so nix-build tests
   # doesn't build them.
   // { exhaustive = testsOf true "exhaustive-"; }
