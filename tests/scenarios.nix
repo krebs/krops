@@ -786,7 +786,28 @@ assert !(krops.isLocalTarget (targets.remote "/"));
           expect_eq arguments "$(sed -n 3p /tmp/nixos-rebuild.log)" "$expected"
         '';
       };
-    });
+    })
+
+  # writeDeploy with allocateTTY: nixos-rebuild's output is a terminal on
+  # the local target.  ssh allocates one on remote targets only if its own
+  # input is a terminal, which the tests' isn't.
+  ++ map (targetKind: scenario {
+    name = "deploy-${targetKind}-allocateTTY";
+    inherit targetKind;
+    prepare = ''
+      rm -f /tmp/nixos-rebuild.log /etc/nixos/flake.nix
+    '';
+    phases = [{
+      sources.x.file = "/fixtures/alt";
+      deploy.allocateTTY = true;
+      check = ''
+        expect_eq arguments "$(sed -n 3p /tmp/nixos-rebuild.log)" switch
+        expect_eq terminal "$(sed -n 4p /tmp/nixos-rebuild.log)" ${
+          if targetKind == "local" then "terminal" else "'no terminal'"
+        }
+      '';
+    }];
+  }) targetKinds;
 
   # Features spanning several sources.
   features = concatMap (targetKind: let

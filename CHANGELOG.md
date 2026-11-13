@@ -5,6 +5,7 @@
 - `git` sources with a branch or tag as `ref` follow it: populate fetches
   the branch or tag on every run, and resets the work tree to what it
   fetched.
+- `writeDeploy`'s new `allocateTTY` runs `nixos-rebuild` with a terminal.
 
 ## 1.31.0
 

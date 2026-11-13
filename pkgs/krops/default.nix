@@ -2,9 +2,10 @@ let
   lib = import ../../lib;
 in
 
-{ nix, openssh, populate, writers }: rec {
+{ expect, nix, openssh, populate, writers }: rec {
 
   rebuild = {
+    allocateTTY ? false,
     flake ? null,
     useNixOutputMonitor
   }:
@@ -14,7 +15,7 @@ in
     flakeDir = lib.head (lib.splitString "#" flake);
     flakeAttr = lib.removePrefix flakeDir flake;
   in
-    runShell target {}
+    runShell target { inherit allocateTTY; }
       (withNixOutputMonitor target useNixOutputMonitor /* sh */ ''
         ${lib.optionalString (flake != null) /* sh */ ''
           ${lib.shell.requireFlakes "deploying a flake"}
@@ -35,6 +36,9 @@ in
           fi
         ''}
         NIX_PATH=${lib.escapeShellArg target.path} \
+        ${lib.optionalString (allocateTTY && lib.isLocalTarget target)
+          # Without ssh, which allocates the terminal on remote targets.
+          "${expect}/bin/unbuffer"} \
         nixos-rebuild ${lib.escapeShellArgs args} ${
           if flake != null then
             ''--flake "$flake"${lib.escapeShellArg flakeAttr}''
@@ -119,6 +123,7 @@ in
     '';
 
   writeDeploy = name: {
+    allocateTTY ? false,
     backup ? false,
     buildTarget ? null,
     crossDeploy ? false,
@@ -159,7 +164,7 @@ in
         ${lib.optionalString (buildTarget' != target')
           (populate { inherit backup force prune source; target = buildTarget'; })}
         ${populate { inherit backup force prune source; target = target'; }}
-        ${rebuild { flake = flake'; inherit useNixOutputMonitor; } ([
+        ${rebuild { flake = flake'; inherit allocateTTY useNixOutputMonitor; } ([
           operation
         ] ++ lib.optionals crossDeploy [
           "--no-build-nix"

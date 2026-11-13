@@ -135,6 +135,12 @@ pkgs.krops.writeDeploy "deploy" {
 For more details about the `target` attribute, please check the `mkTarget`
 function in [lib/default.nix](lib/default.nix).
 
+### `allocateTTY` (optional, defaults to false)
+
+Run `nixos-rebuild` with a terminal, so it shows colours and progress.  On a
+remote target, this sets `-t` on the ssh command, which only allocates a
+terminal if krops runs in one.  On the local target, `unbuffer` provides one.
+
 ### `backup` (optional, defaults to false)
 
 Backup all paths specified in source before syncing new sources.
