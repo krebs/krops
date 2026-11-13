@@ -180,6 +180,78 @@ fn lock_has_input(locks: &Value, path: &[String]) -> bool {
     true
 }
 
+/// The fields in output, each ending in a null byte, unless something
+/// follows the last.
+fn split_fields(output: &str) -> Option<Vec<String>> {
+    let mut fields: Vec<String> = output.split('\0').map(str::to_string).collect();
+    // What follows the last null byte, empty if output ends with one.
+    fields.pop().filter(String::is_empty)?;
+    Some(fields)
+}
+
+/// What derived_state sends back about a source's derived copy.
+#[derive(Debug, PartialEq)]
+struct DerivedState<'a> {
+    /// Where .populate/derived/<name>/original resolves to.
+    original: &'a str,
+    /// The key of the copy, or empty.
+    key: &'a str,
+    /// The store path the copy's result link points to, if the store has
+    /// it, or empty.
+    result: &'a str,
+    /// link or directory, if the target path is one, or empty.
+    target_kind: &'a str,
+    /// A line of sha256sum for each patch.
+    patch_sums: &'a [String],
+    /// The hash of each source drawn from, or empty if it's in the store.
+    hashes: &'a [String],
+}
+
+impl<'a> DerivedState<'a> {
+    /// The state in the fields derived_state prints: four, those of the
+    /// patches up to an empty one, and then one for each of drawn sources.
+    fn parse(fields: &'a [String], drawn: usize) -> Option<DerivedState<'a>> {
+        let [original, key, result, target_kind, rest @ ..] = fields else {
+            return None;
+        };
+        let separator = rest.iter().position(String::is_empty)?;
+        let (patch_sums, hashes) = (&rest[..separator], &rest[separator + 1..]);
+        if hashes.len() != drawn {
+            return None;
+        }
+        Some(DerivedState {
+            original,
+            key,
+            result,
+            target_kind,
+            patch_sums,
+            hashes,
+        })
+    }
+}
+
+/// The text whose hash is the key of a derived copy, like the shell
+/// implementation computes it: the original's path, the spec, the patches'
+/// sums, and, for a copy drawing inputs, nix flake lock's arguments and the
+/// hashes of the sources drawn from that aren't in the store.
+fn key_text(
+    original: &str,
+    spec: &Value,
+    patch_sums: &[String],
+    drawn_args: &[String],
+    hashes: &[String],
+) -> String {
+    let mut text = format!("{original}\n{spec}\n");
+    for line in patch_sums
+        .iter()
+        .chain(drawn_args)
+        .chain(hashes.iter().filter(|h| !h.is_empty()))
+    {
+        text += &format!("{line}\n");
+    }
+    text
+}
+
 /// The store path a path below the store is in, and the rest of the path.
 fn split_store_path(path: &str) -> (&str, &str) {
     let end = path
@@ -244,10 +316,9 @@ impl<'a> Flakes<'a> {
         let output = self
             .context
             .output(&Self::on_target(snippet, flakes), args)?;
-        let mut fields: Vec<String> = output.split('\0').map(str::to_string).collect();
-        // What follows the last null byte.
-        fields.pop();
-        Ok(fields)
+        split_fields(&output).ok_or_else(|| {
+            Failure::Message("error: the target sent back a field without its end".to_string())
+        })
     }
 
     /// Resolves paths on the target.
@@ -497,19 +568,16 @@ impl<'a> Flakes<'a> {
         let mut state_args = vec![state.as_str(), target_path.as_str(), patch_dir.as_str()];
         state_args.extend(drawn.iter().map(String::as_str));
         let fields = self.fields(sh::draw::DERIVED_STATE, false, &state_args)?;
-        let malformed =
-            || Failure::Message(format!("error: can't read the state of source {name}"));
-        let [original, key_file, result, target_kind, rest @ ..] = fields.as_slice() else {
-            return Err(malformed());
-        };
-        let separator = rest
-            .iter()
-            .position(String::is_empty)
-            .ok_or_else(malformed)?;
-        let (patch_sums, hashes) = (&rest[..separator], &rest[separator + 1..]);
-        if hashes.len() != drawn.len() {
-            return Err(malformed());
-        }
+        let DerivedState {
+            original,
+            key: old_key,
+            result,
+            target_kind,
+            patch_sums,
+            hashes,
+        } = DerivedState::parse(&fields, drawn.len()).ok_or_else(|| {
+            Failure::Message(format!("error: can't read the state of source {name}"))
+        })?;
 
         // Like Nix' toJSON: attributes sorted by name.
         let follows: Vec<Value> = self.follows[name]
@@ -521,20 +589,9 @@ impl<'a> Flakes<'a> {
             "materialize": materialize,
             "rewriteLock": rewrite_lock,
         });
-        let mut text = format!("{original}\n{spec}\n");
-        for sum in patch_sums {
-            text += &format!("{sum}\n");
-        }
-        if !drawn.is_empty() {
-            for arg in &args {
-                text += &format!("{arg}\n");
-            }
-            for hash in hashes.iter().filter(|h| !h.is_empty()) {
-                text += &format!("{hash}\n");
-            }
-        }
-        let key = sha256_hex(text.as_bytes());
-        let unchanged = *key_file == key;
+        let drawn_args: &[String] = if drawn.is_empty() { &[] } else { &args };
+        let key = sha256_hex(key_text(original, &spec, patch_sums, drawn_args, hashes).as_bytes());
+        let unchanged = old_key == key;
 
         if materialize {
             if !unchanged || target_kind != "directory" {
@@ -565,7 +622,7 @@ impl<'a> Flakes<'a> {
         }
 
         let (path, subdir) = split_store_path(original);
-        let result = if unchanged { result.as_str() } else { "" };
+        let result = if unchanged { result } else { "" };
         let mut all = vec![
             state.as_str(),
             path,
@@ -839,6 +896,57 @@ mod tests {
         assert_eq!(
             sha256_hex(b"abc"),
             "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+    }
+
+    fn strings(fields: &[&str]) -> Vec<String> {
+        fields.iter().map(|f| f.to_string()).collect()
+    }
+
+    #[test]
+    fn fields() {
+        assert_eq!(split_fields(""), Some(vec![]));
+        assert_eq!(split_fields("a\0\0b\0"), Some(strings(&["a", "", "b"])));
+        assert_eq!(split_fields("a\0b"), None);
+    }
+
+    #[test]
+    fn derived_states() {
+        let fields = strings(&["/nix/store/o", "k", "", "link", "s1", "s2", "", "h", ""]);
+        assert_eq!(
+            DerivedState::parse(&fields, 2),
+            Some(DerivedState {
+                original: "/nix/store/o",
+                key: "k",
+                result: "",
+                target_kind: "link",
+                patch_sums: &strings(&["s1", "s2"]),
+                hashes: &strings(&["h", ""]),
+            })
+        );
+        // A field missing, or one too many.
+        assert_eq!(DerivedState::parse(&fields, 3), None);
+        assert_eq!(DerivedState::parse(&fields, 1), None);
+        assert_eq!(DerivedState::parse(&fields[..3], 0), None);
+        // No end of the patches.
+        assert_eq!(
+            DerivedState::parse(&strings(&["o", "k", "r", "t", "s"]), 0),
+            None
+        );
+    }
+
+    #[test]
+    fn key_texts() {
+        let spec = json!({ "follows": [], "materialize": false, "rewriteLock": false });
+        assert_eq!(
+            key_text(
+                "/nix/store/o",
+                &spec,
+                &strings(&["s  /p/0001-x.patch"]),
+                &strings(&["--override-input", "a", "path:/b"]),
+                &strings(&["h", ""]),
+            ),
+            "/nix/store/o\n{\"follows\":[],\"materialize\":false,\"rewriteLock\":false}\ns  /p/0001-x.patch\n--override-input\na\npath:/b\nh\n"
         );
     }
 
