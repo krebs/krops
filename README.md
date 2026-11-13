@@ -126,6 +126,7 @@ pkgs.krops.writeDeploy "deploy" {
   target = lib.mkTarget "user@host/path" // {
     extraOptions = [
       "-o" "LogLevel=DEBUG"
+      ["-i" "/path/to/identity/file"]
     ];
     sudo = true;
   };
@@ -697,21 +698,24 @@ for features spanning sources, such as flake inputs from sources, one for edge
 cases of flakes, such as unusual lock files, one for staying inside the target
 directory, whatever links it contains, and one for the arguments `writeDeploy`
 passes to `nixos-rebuild`.  After every deploy, all tests check that nothing
-outside the target directory changed.  The tests deploy every combination
-of a source type's options, except for patches, which the features test
-covers, to the deploying machine itself, to a remote target
-as `root`, and to a remote target using `sudo`, and check the result after
-deploying and after deploying again.  The scenarios whose results depend on
-the version of rsync also run with rsync 3.4.1 and 3.5.0, which
-`tests/rsync.nix` builds, whatever version nixpkgs has.
-The tests require KVM and nixpkgs with `pkgs.testers.runNixOSTest`
-(23.05 or later), and use `<nixpkgs>` by default.
+outside the target directory changed.  The tests deploy combinations of a
+source type's options to the deploying machine itself, to a remote target as
+`root`, and to a remote target using `sudo`, and check the result after
+deploying and after deploying again.  They cover every combination that a code
+path tells apart; the exhaustive tests add the remaining ones, e.g. drawing
+inputs combined with each of rsync's options.  Patches get covered by the
+features test.  The scenarios whose results depend on the version of rsync also
+run with rsync 3.4.1 and 3.5.0, which `tests/rsync.nix` builds, whatever
+version nixpkgs has.  The tests require KVM and nixpkgs with
+`pkgs.testers.runNixOSTest` (23.05 or later), and use `<nixpkgs>` by default.
 
 ```sh
-nix-build tests                 # all tests
-nix-build tests -A flake        # the test for one source type
-nix-build tests -A rsync-3-5-0  # the scenarios depending on rsync's version
-nix-build tests -A jq           # populate's programs for flakes, without VMs
+nix-build tests                   # all tests, except the exhaustive ones
+nix-build tests -A flake          # the test for one source type
+nix-build tests -A exhaustive     # all exhaustive tests
+nix-build tests -A exhaustive.git # the remaining combinations of one test
+nix-build tests -A rsync-3-5-0    # the scenarios depending on rsync's version
+nix-build tests -A jq             # populate's programs for flakes, without VMs
 ```
 
 

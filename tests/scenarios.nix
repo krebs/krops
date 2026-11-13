@@ -82,9 +82,11 @@ let
   # Builds a scenario from a name, a target kind, and phases with sources.
   # Isolated scenarios start with no target directories and a collected store
   # on both machines, so no other scenario's store paths or roots stand in for
-  # missing ones.
+  # missing ones.  An exhaustive scenario covers a combination that no code
+  # path tells apart from the ones the other scenarios cover, so it only runs
+  # in the exhaustive tests.
   scenario = {
-    name, targetKind, node ? null, isolate ? false,
+    name, targetKind, node ? null, isolate ? false, exhaustive ? false,
     prepare ? "", prepareDeployer ? null, phases,
   }: let
     path = "/var/krops/${name}";
@@ -146,7 +148,7 @@ let
         mutateDeployer = script mutateDeployer;
       };
   in {
-    inherit name isolate;
+    inherit name isolate exhaustive;
     node =
       if node != null then node
       else if targetKind == "local" then "deployer"
@@ -244,6 +246,10 @@ assert !(krops.isLocalTarget (targets.remote "/"));
 
   file = let
     f = flags: _: {
+      # Drawing inputs happens after rsync, so it doesn't depend on rsync's
+      # options.
+      exhaustive = flags.inputs != "none" &&
+        (flags.checksum || flags.deleteExcluded || flags.filters);
       prepare = ''
         mkdir -p "$T"/x
         echo old > "$T"/x/skip-ex
@@ -406,6 +412,10 @@ assert !(krops.isLocalTarget (targets.remote "/"));
     # The flake in a subdirectory has no inputs to draw from sources.
     if flags.kind == "subdir" && flags.inputs != "none" then null else {
     isolate = true;
+    # Materializing copies what got delivered, whichever way, so it depends
+    # on how inputs get drawn and on subdirectories, not on how the flake got
+    # there.
+    exhaustive = flags.materialize && !lib.elem flags.kind [ "git" "subdir" ];
     phases = twice ({
       sources = {
         x.flake = {
@@ -438,6 +448,8 @@ assert !(krops.isLocalTarget (targets.remote "/"));
       inputs = flags.inputs or "none";
     in {
       isolate = true;
+      # Materializing copies what got delivered, whichever input it is.
+      exhaustive = flags.materialize && name != "dep";
       phases = twice ({
         sources = {
           x.flake-input = {
@@ -497,6 +509,10 @@ assert !(krops.isLocalTarget (targets.remote "/"));
       } // drawInputs flags.inputs { dep.follows = "alt"; };
     } // optionalAttrs (flags.inputs != "none") alt;
   in {
+    # Drawing inputs happens after Git, so it doesn't depend on Git's
+    # options.
+    exhaustive = flags.inputs != "none" &&
+      (flags.shallow || flags.fetchAlways || flags.cleanExclude);
     phases = [
       # The older commit first, so deploying HEAD changes the work tree, and
       # fetches if fetchAlways is set or the clone is shallow.
@@ -664,6 +680,8 @@ assert !(krops.isLocalTarget (targets.remote "/"));
     # The local target can't have another build target.
     if flags.buildTarget && ctx.targetKind == "local" then null else {
       node = if flags.buildTarget then "deployer" else null;
+      # /etc/nixos/flake.nix only matters if no flake gets deployed.
+      exhaustive = flags.etcFlake && flags.flake != "none";
       # Each scenario creates or removes /etc/nixos/flake.nix.
       prepare = ''
         rm -f /tmp/nixos-rebuild.log
@@ -1231,6 +1249,8 @@ assert !(krops.isLocalTarget (targets.remote "/"));
     # An input that gets drawn from a source isn't needed on the target, with
     # all it pins.
     (modes "overridden-roots" ({ draw, mode, ... }: {
+      # What gets delivered doesn't depend on how inputs get drawn.
+      exhaustive = mode == "generated";
       phases = twice {
         sources = alt // {
           x.flake-input = {
@@ -1246,6 +1266,8 @@ assert !(krops.isLocalTarget (targets.remote "/"));
     # The input's own lock file pins something unreachable, which gets drawn
     # from a source anyway.
     (modes "own-lock-unreachable" ({ draw, mode, ... }: {
+      # What gets delivered doesn't depend on how inputs get drawn.
+      exhaustive = mode == "generated";
       prepareDeployer = ''
         rm -fR /root/.cache/nix
       '';
@@ -1427,6 +1449,8 @@ assert !(krops.isLocalTarget (targets.remote "/"));
     # An input of an input drawn from a source that draws inputs itself
     # gets drawn from another source.
     (modes "override" ({ draw, flake, ... }: {
+      # Drawing inputs happens on the target alike for every kind of target.
+      exhaustive = targetKind != "local";
       phases = twice {
         sources = {
           x.flake = {
@@ -1444,6 +1468,8 @@ assert !(krops.isLocalTarget (targets.remote "/"));
     # The same one level deeper: the input gets drawn from a source below
     # an input that the source in between draws from a source itself.
     (modes "override-deep" ({ draw, flake, ... }: {
+      # Drawing inputs happens on the target alike for every kind of target.
+      exhaustive = targetKind != "local";
       phases = twice {
         sources = {
           x.flake = {
@@ -1461,6 +1487,8 @@ assert !(krops.isLocalTarget (targets.remote "/"));
     # A source with a rewritten lock file draws an input from a source with
     # a generated flake, and an input below it from another source.
     (s "override-mixed" {
+      # Drawing inputs happens on the target alike for every kind of target.
+      exhaustive = targetKind != "local";
       phases = twice {
         sources = {
           x.flake = {
@@ -1481,6 +1509,8 @@ assert !(krops.isLocalTarget (targets.remote "/"));
       };
     })
     (modes "nonflake-input" ({ draw, flake, ... }: {
+      # Drawing inputs happens on the target alike for every kind of target.
+      exhaustive = targetKind != "local";
       phases = twice {
         sources = {
           x.file = { path = "/fixtures/usedata"; } // draw { data.follows = "data"; };
@@ -1538,6 +1568,8 @@ assert !(krops.isLocalTarget (targets.remote "/"));
     (modes "source-name" ({ draw, flake, ... }: let
       x = from: { path = "/fixtures/filesrc"; } // draw { dep.follows = from; };
     in {
+      # Drawing inputs happens on the target alike for every kind of target.
+      exhaustive = targetKind != "local";
       phases = twice {
         sources = {
           "alt-1.0".file = "/fixtures/alt";

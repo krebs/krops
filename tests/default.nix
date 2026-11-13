@@ -1,7 +1,10 @@
 # NixOS VM tests for populate: one test per source type, one for features
 # spanning sources, one for edge cases of flakes, one for staying inside the
-# target directory, and one for writeDeploy's arguments to nixos-rebuild.  Build all with nix-build tests, or one with,
-# e.g., nix-build tests -A flake.  jq runs populate's jq programs for flakes
+# target directory, and one for writeDeploy's arguments to nixos-rebuild.
+# Build all with nix-build tests, or one with, e.g., nix-build tests -A flake.
+# The exhaustive tests add the combinations of options that no code path
+# tells apart from the ones the others cover; build them with nix-build tests
+# -A exhaustive, or one with, e.g., nix-build tests -A exhaustive.flake.  jq runs populate's jq programs for flakes
 # without VMs.
 { pkgs ? import ../pkgs {} }:
 
@@ -32,10 +35,22 @@ let
   };
   scenarios = scenariosWith pkgs.rsync;
   flakeJq = import ../pkgs/populate/flake-jq.nix;
+  # VM tests of those of the groups of scenarios that are, or aren't,
+  # exhaustive, named after the groups with prefix in front.
+  testsOf = exhaustive: prefix: pkgs.lib.mapAttrs
+    (name: scenarios: import ./vm.nix {
+      inherit pkgs gitHead scenarios;
+      name = prefix + name;
+    })
+    (pkgs.lib.filterAttrs (_: scenarios: scenarios != [])
+      (builtins.mapAttrs
+        (_: builtins.filter (scenario: scenario.exhaustive == exhaustive))
+        scenarios));
 in
-  builtins.mapAttrs
-    (name: scenarios: import ./vm.nix { inherit pkgs name scenarios gitHead; })
-    scenarios
+  testsOf false ""
+  # An attribute set without recurseForDerivations, so nix-build tests
+  # doesn't build them.
+  // { exhaustive = testsOf true "exhaustive-"; }
   // pkgs.lib.mapAttrs'
     (version: rsync: {
       name = "rsync-${builtins.replaceStrings [ "." ] [ "-" ] version}";
