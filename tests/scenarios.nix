@@ -1031,7 +1031,7 @@ assert !(krops.isLocalTarget (targets.remote "/"));
         rm -fR /tmp/rewrite-cache-git
         mkdir /tmp/rewrite-cache-git
         cd /tmp/rewrite-cache-git
-        echo '{ outputs = _: { greeting = "altgit"; }; }' > flake.nix
+        echo '{ outputs = _: { who = "altgit"; }; }' > flake.nix
         git init -q
         git add flake.nix
         git -c user.name=krops -c user.email=spam@krebsco.de commit -q -m altgit
@@ -1059,7 +1059,7 @@ assert !(krops.isLocalTarget (targets.remote "/"));
           '';
           mutateDeployer = ''
             cd /tmp/rewrite-cache-git
-            echo '{ outputs = _: { greeting = "altgit2"; }; }' > flake.nix
+            echo '{ outputs = _: { who = "altgit2"; }; }' > flake.nix
             git -c user.name=krops -c user.email=spam@krebsco.de commit -q -a -m altgit2
           '';
         }
