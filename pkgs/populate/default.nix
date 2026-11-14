@@ -460,9 +460,18 @@ let
                     then "${flakesDir}/${source}"
                     else "${target.path}/${source}"
                 )})
+                # By the commit of a Git work tree that Nix gets as
+                # git+file:, which Git tells quickly, and else by a hash,
+                # which takes reading all of the source.
                 case $drawn in
                   /nix/store/*) ;;
-                  *) nix-hash --type sha256 "$drawn" ;;
+                  *)
+                    if rev=$(clean_git_rev "$drawn") && test -n "$rev"; then
+                      printf 'git %s\n' "$rev"
+                    else
+                      nix-hash --type sha256 "$drawn"
+                    fi
+                    ;;
                 esac
               '') (unique (drawnFrom name))}
             ''}
@@ -608,20 +617,46 @@ let
         }
 
         ${gitProblems}
-        # Prints the flake URL of the source named $1: git+file: if it has a
-        # .git directory git_problems finds nothing wrong with, and that has
-        # no hooks, else path:.  Nix runs Git in a git+file: flake, with the
-        # repository's configuration and hooks.
+        # Succeeds if Nix gets the directory $1 as a git+file: flake: if it
+        # has a .git directory git_problems finds nothing wrong with, and
+        # that has no hooks.  Nix runs Git in a git+file: flake, with the
+        # repository's configuration and hooks, so it only gets such ones.
+        git_flake() {
+          ! test -L "$1"/.git && test -d "$1"/.git || return 1
+          git_flake_problems=$(git_problems "$1" 2>/dev/null) || return 1
+          test -z "$git_flake_problems" || return 1
+          if test -d "$1"/.git/hooks; then
+            test -z "$(find "$1"/.git/hooks -mindepth 1 ! -name '*.sample' | head -n 1)"
+          fi
+        }
+        # Prints the commit HEAD of the Git work tree $1 points to, if
+        # git_flake $1, and none of its tracked files differ from that
+        # commit, which is all of it Nix uses then.  Git runs without hooks
+        # and file system monitors.
+        clean_git_rev() (
+          git_flake "$1" || exit 1
+          cd "$1"
+          git() {
+            command git -c core.hooksPath=/dev/null -c core.fsmonitor=false "$@"
+          }
+          # Without writing the index: in a copy of a work tree, e.g. in a file
+          # source, that makes it differ from the original's, so the next run
+          # copies it again, unless the original's changed in the same second,
+          # keeping its size, which rsync doesn't notice.  Then the work tree
+          # differs from its index, which Nix refuses to lock.
+          changes=$(git --no-optional-locks status --porcelain --untracked-files=no 2>/dev/null) || exit 1
+          test -z "$changes" || exit 1
+          git rev-parse --verify --quiet HEAD
+        )
+        # Prints the flake URL of the source named $1: git+file: if
+        # git_flake, else path:.
         flake_url() {
           path=$(readlink -f ${quote target.path}/"$1")
           if ! test -d "$path"; then
             >&2 printf 'error: source %s is not a directory\n' "$1"
             exit 1
           fi
-          if ! test -L "$path"/.git && test -d "$path"/.git &&
-              problems=$(git_problems "$path" 2>/dev/null) &&
-              test -z "$problems" &&
-              test -z "$(find "$path"/.git/hooks -mindepth 1 ! -name '*.sample' 2>/dev/null | head -n 1)"; then
+          if git_flake "$path"; then
             if test -e "$path"/.gitmodules; then
               printf 'git+file:%s?submodules=1' "$(url_path "$path")"
             else

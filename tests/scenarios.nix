@@ -1010,6 +1010,67 @@ assert !(krops.isLocalTarget (targets.remote "/"));
         }
       ];
     }))
+    # A copy with a rewritten lock file that draws an input from a Git work
+    # tree, which Nix gets as git+file:, gets made again only when the
+    # commit or the tracked files change, not for an untracked file, which
+    # Nix doesn't see.  The source is a file source keeping its .git.
+    (s "rewrite-cache-git" (let
+      sources = {
+        x.flake-input = {
+          url = "/fixtures/top"; name = "dep"; inherit fetchOnTarget;
+          inputs.inner.follows = "a";
+        };
+        a.file = "/tmp/rewrite-cache-git";
+      };
+      copyKept = ''
+        expect_eq "store path" "$(readlink "$T"/x)" "$(cat "$T".first)"
+        expect_eq "copy made at" "$(stat -c %y "$T"/.populate/derived/x/key)" "$(cat "$T".key)"
+      '';
+    in {
+      prepareDeployer = ''
+        rm -fR /tmp/rewrite-cache-git
+        mkdir /tmp/rewrite-cache-git
+        cd /tmp/rewrite-cache-git
+        echo '{ outputs = _: { greeting = "altgit"; }; }' > flake.nix
+        git init -q
+        git add flake.nix
+        git -c user.name=krops -c user.email=spam@krebsco.de commit -q -m altgit
+      '';
+      phases = [
+        {
+          inherit sources;
+          check = checkFlake { attr = "greeting"; expected = "dep+altgit"; };
+          mutate = ''
+            readlink "$T"/x > "$T".first
+            stat -c %y "$T"/.populate/derived/x/key > "$T".key
+          '';
+        }
+        {
+          inherit sources;
+          check = copyKept;
+          mutateDeployer = ''
+            echo untracked > /tmp/rewrite-cache-git/untracked
+          '';
+        }
+        {
+          inherit sources;
+          check = copyKept + ''
+            test -e "$T"/a/untracked || fail "a/untracked missing"
+          '';
+          mutateDeployer = ''
+            cd /tmp/rewrite-cache-git
+            echo '{ outputs = _: { greeting = "altgit2"; }; }' > flake.nix
+            git -c user.name=krops -c user.email=spam@krebsco.de commit -q -a -m altgit2
+          '';
+        }
+        {
+          inherit sources;
+          check = checkFlake { attr = "greeting"; expected = "dep+altgit2"; } + ''
+            test "$(readlink "$T"/x)" != "$(cat "$T".first)" || fail "store path unchanged"
+          '';
+        }
+      ];
+    }))
     # A materialized input is a writable copy, patched and with a rewritten
     # lock file, which gets made again only when what it derives from
     # changes, and becomes a link again when not materialized anymore.

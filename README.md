@@ -713,7 +713,9 @@ see [The target directory](#the-target-directory), and has no hooks.  Lock
 files get rewritten or generated on every run, so they match the sources.
 Copies of `flake` and `flake-input` sources get made again only if the
 delivered store path, the patches, or the sources they draw inputs from
-change.  Inputs that get drawn from other sources don't get delivered with
+change.  For a source in a Git work tree that Nix gets as `git+file:`,
+that's its commit and tracked files, which populate checks with Git;
+other sources get read entirely, to hash them.  Inputs that get drawn from other sources don't get delivered with
 a `flake` or `flake-input` source, and neither does what they pin.
 Generated flakes and copies get removed once their sources no longer need
 them.  This requires Nix with flake support (Nix 2.4 or later) on the

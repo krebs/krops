@@ -1,5 +1,13 @@
 # Changes
 
+## Unreleased
+
+- Whether a copy of a `flake` or `flake-input` source drawing inputs from
+  a Git work tree that Nix gets as `git+file:` needs to be made again
+  depends on its commit, if no tracked file differs from it, instead of a
+  hash of all of the work tree, `.git` included, which populate read on
+  every run.  Such copies get made again once.
+
 ## 1.31.1
 
 - Drawing an input from a source that isn't a directory stops populate,
