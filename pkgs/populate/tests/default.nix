@@ -40,9 +40,10 @@ let
     if deploy != null then throw "populate's tests don't deploy" else
     pkgs.writers.writeDash "populate" /* sh */ ''
       set -efu
-      PATH=${lib.makeBinPath (with pkgs; [
-        coreutils findutils git nix openssh pass passage rsync
-      ])}''${PATH:+:$PATH}
+      PATH=${lib.makeBinPath [
+        pkgs.coreutils pkgs.findutils pkgs.git pkgs.nix pkgs.openssh pkgs.pass
+        pkgs.passage rsync
+      ]}''${PATH:+:$PATH}
       export PATH
       exec ${populate-unwrapped}/bin/populate ${lib.escapeShellArgs (
         lib.optional backup "--backup" ++

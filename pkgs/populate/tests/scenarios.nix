@@ -4,7 +4,13 @@
 # sources.  The arguments are those of builder.nix, which builds them.
 args:
 
-with import ./builder.nix args;
+let
+  inherit (args) lib agePath gitFirst gitHead gitUrl rsyncVersion url;
+  inherit (lib) concatMap optional optionalAttrs optionalString;
+  inherit (import ./builder.nix args)
+    alt checkFlake copyingWithSudo drawInputs flakeOf inputModes matrix
+    refuseCopyingWithSudo scenario targetKinds targetName twice;
+in
 
 {
 

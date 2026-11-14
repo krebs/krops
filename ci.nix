@@ -1,10 +1,10 @@
 let
   krops = ./.;
 
-  lib = import "${krops}/lib";
   pkgs = import "${krops}/pkgs" {};
+  klib = import "${krops}/lib/with.nix" { inherit (pkgs) lib; };
 
-  source = lib.evalSource [{
+  source = klib.evalSource [{
     nixos-config.file = pkgs.writeText "nixos-config" ''
       { pkgs, ... }: {
 
@@ -20,6 +20,6 @@ in {
   test = pkgs.krops.writeTest "test" {
     force = true;
     source = source;
-    target = "${lib.getEnv "HOME"}/krops-test";
+    target = "${builtins.getEnv "HOME"}/krops-test";
   };
 }

@@ -24,10 +24,10 @@ let
     sha256 = "07mg3iaqjf1w49vmwfchi7b1w55bh7rvsbgicp2m47gnj9alwdb6";
   };
 
-  lib = import "${krops}/lib";
   pkgs = import "${krops}/pkgs" {};
+  klib = import "${krops}/lib/with.nix" { inherit (pkgs) lib; };
 
-  source = lib.evalSource [{
+  source = klib.evalSource [{
     nixpkgs.git = {
       clean.exclude = ["/.version-suffix"];
       ref = "4b4bbce199d3b3a8001ee93495604289b01aaad3";
@@ -75,9 +75,8 @@ machine that uses them.
 
 krops' flake provides `populate`, `writeDeploy`, and the other functions
 described below as `lib.<system>`, and its `lib` directory provides
-`evalSource` and `mkTarget`.  `lib/with.nix` is a function taking nixpkgs'
-lib, as below; `lib/default.nix` merges it, with `<nixpkgs/lib>`, into
-nixpkgs' lib and builtins:
+`evalSource` and `mkTarget` in `lib/with.nix`, krops' lib, a function
+taking nixpkgs' lib:
 
 ```nix
 {
@@ -87,12 +86,12 @@ nixpkgs' lib and builtins:
 
   outputs = { self, krops, nixpkgs, ... }: let
     system = "x86_64-linux";
-    lib = import "${krops}/lib/with.nix" { inherit (nixpkgs) lib; };
+    klib = import "${krops}/lib/with.nix" { inherit (nixpkgs) lib; };
   in {
     apps.${system}.deploy = {
       type = "app";
       program = toString (krops.lib.${system}.writeDeploy "deploy" {
-        source = lib.evalSource [{
+        source = klib.evalSource [{
           nixos-config.file = toString ./configuration.nix;
           nixpkgs.flake-input = { url = toString self; name = "nixpkgs"; };
         }];
@@ -142,7 +141,7 @@ Example:
 ```nix
 pkgs.krops.writeDeploy "deploy" {
   source = /* ... */;
-  target = lib.mkTarget "user@host/path" // {
+  target = klib.mkTarget "user@host/path" // {
     extraOptions = [
       "-o" "LogLevel=DEBUG"
       ["-i" "/path/to/identity/file"]
@@ -325,7 +324,7 @@ that means.
 
 ## Source Types
 
-`lib.evalSource` turns sources, written in Nix, into what `pkgs.populate`
+`klib.evalSource` turns sources, written in Nix, into what `pkgs.populate`
 passes to populate.  [populate's
 README](pkgs/populate/README.md#source-types) describes the source types:
 `derivation`, `file`, `flake`, `flake-input`, `git`, `pass`, `passage`,

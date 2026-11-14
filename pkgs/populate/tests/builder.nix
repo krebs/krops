@@ -240,10 +240,6 @@ let
   };
 
 in {
-  inherit lib url gitUrl remoteHost agePath gitHead gitFirst rsyncVersion;
-  inherit (lib)
-    attrNames concatMap concatStringsSep foldl' isBool mapAttrsToList
-    optional optionalAttrs optionals optionalString;
   inherit
     prelude cartesian flagsName alt targetName
     inputModes drawInputs flakeOf scenario twice

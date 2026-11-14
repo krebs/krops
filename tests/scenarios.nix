@@ -4,7 +4,12 @@
 # and targets, which give the target of each kind for a path.
 { targets, ... }@args:
 
-with import ../pkgs/populate/tests/builder.nix (removeAttrs args [ "targets" ]);
+let
+  inherit (args) lib gitHead gitUrl;
+  inherit (lib) concatStringsSep optional optionalAttrs optionals optionalString;
+  inherit (import ../pkgs/populate/tests/builder.nix (removeAttrs args [ "targets" ]))
+    alt drawInputs matrix scenario targetKinds twice;
+in
 
 {
 
