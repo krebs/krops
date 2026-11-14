@@ -492,7 +492,8 @@ pub fn deliver(
         )?
     };
     let here = |snippet: &str, args: &[&str]| {
-        let mut command = run::local_shell(snippet, args, workdir);
+        let snippet = format!("{}{snippet}", sh::NIX_LOOKING);
+        let mut command = run::local_shell(&snippet, args, workdir);
         command.env("NIX_CONFIG", nix_config());
         run::output(&mut command)
     };

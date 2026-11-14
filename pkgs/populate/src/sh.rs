@@ -565,6 +565,50 @@ require_flakes() {
 }
 "#;
 
+/// Defines nix_looking COMMAND..., which runs COMMAND, a Nix command
+/// looking at a flake without writing its lock file, and leaves out of
+/// what it prints on standard error Nix's warning that it doesn't write
+/// the lock file it changed, listing what changed.  The shell code for
+/// flakes overrides inputs drawn from sources when looking at flakes,
+/// which changes the lock file on every run, without anything changing,
+/// or says itself that a lock file needs to be updated.
+pub const NIX_LOOKING: &str = r#"
+nix_looking() {
+  nix_looking_status=$(mktemp)
+  {
+    {
+      if "$@" 2>&1 >&3 3>&-; then
+        nix_looking_code=0
+      else
+        nix_looking_code=$?
+      fi
+      echo "$nix_looking_code" > "$nix_looking_status"
+    } | {
+      # The warning's lines after the first begin with a bullet or blanks.
+      nix_looking_skip=
+      while IFS= read -r nix_looking_line || test -n "$nix_looking_line"; do
+        case $nix_looking_line in
+          'warning: not writing modified lock file of flake '*)
+            nix_looking_skip=1
+            continue
+            ;;
+          '• '*|'  '*)
+            if test -n "$nix_looking_skip"; then
+              continue
+            fi
+            ;;
+        esac
+        nix_looking_skip=
+        printf '%s\n' "$nix_looking_line"
+      done
+    } >&2
+  } 3>&1
+  read -r nix_looking_code < "$nix_looking_status"
+  rm -f "$nix_looking_status"
+  return "$nix_looking_code"
+}
+"#;
+
 /// The definitions the shell code for flakes uses.
 pub fn prelude() -> String {
     [
@@ -574,6 +618,7 @@ pub fn prelude() -> String {
         REMOVE_OTHERS,
         URL_PATH,
         REQUIRE_FLAKES,
+        NIX_LOOKING,
     ]
     .concat()
 }
@@ -621,7 +666,7 @@ nix-store --check-validity "$1" 2>/dev/null
     /// lock file, since locking would change it.  If its inputs can't be
     /// archived, it fails if REQUIRE isn't empty, saying so for the source
     /// NAME, with HINT appended, or else archives what Nix locks now, or
-    /// prints nothing, with a warning.
+    /// prints nothing, with a warning.  It needs NIX_LOOKING.
     pub const ARCHIVE: &str = r#"
 path=$1 subdir=$2 require=$3 name=$4 hint=$5
 shift 5
@@ -639,14 +684,14 @@ if test -e "$dir"/flake.nix && test -e "$dir"/flake.lock; then
       n=$((n - 1))
     done
   fi
-  if nix flake archive --json --no-update-lock-file "$@" "$flake"; then
+  if nix_looking nix flake archive --json --no-update-lock-file "$@" "$flake"; then
     :
   elif test -n "$require"; then
     >&2 printf 'error: source %s: the inputs its own lock file pins can'"'"'t be delivered%s\n' \
         "$name" "$hint"
     exit 1
   # Without --no-update-lock-file, Nix adds what the lock file lacks.
-  elif nix flake archive --json --no-write-lock-file "$@" "$flake"; then
+  elif nix_looking nix flake archive --json --no-write-lock-file "$@" "$flake"; then
     >&2 printf 'warning: source %s: its own lock file needs to be updated; delivering it with the inputs Nix locks now, which evaluating it may not use\n' \
         "$name"
   else
@@ -898,7 +943,7 @@ while test "$n" -gt 0; do
   shift
   n=$((n - 1))
 done
-if ! nix flake metadata --json --no-write-lock-file "$@" "$url"; then
+if ! nix_looking nix flake metadata --json --no-write-lock-file "$@" "$url"; then
   rm -R "$empty"
   >&2 printf 'error: source %s draws inputs from other sources, but its flake can'"'"'t be locked\n' \
       "$name"
@@ -1035,16 +1080,31 @@ ln -fns "$result${subdir:+/$subdir}" "$target_path"
 "#;
 
     /// generate DIR TEXT: makes DIR a flake, with TEXT as its flake.nix,
-    /// and locks it.
+    /// and locks it anew, so the lock file pins what the inputs are now.
+    /// What Nix prints about creating the lock file only gets printed if
+    /// it differs from the one there was, since that's on every run.
     pub const GENERATE: &str = r#"
 dir=$1 text=$2
 mkdir -p "$(dirname "$dir")"
+old_lock=
+if ! test -L "$dir"/flake.lock && test -f "$dir"/flake.lock; then
+  old_lock=$(cat "$dir"/flake.lock)
+fi
 rm -fR "$dir"
 mkdir "$dir"
 cd "$dir"
 printf %s "$text" > flake.nix
+log=$(mktemp)
 # Not just ., which Nix takes for the enclosing Git work tree, if any.
-nix flake lock "path:$(url_path "$(pwd -P)")" >&2
+if ! nix flake lock "path:$(url_path "$(pwd -P)")" >&2 2>"$log"; then
+  cat "$log" >&2
+  rm "$log"
+  exit 1
+fi
+if test "$(cat flake.lock)" != "$old_lock"; then
+  cat "$log" >&2
+fi
+rm "$log"
 "#;
 
     /// clean_up SENTINEL NAMES NOT_FLAKES GENERATED DERIVED PATCHED: removes

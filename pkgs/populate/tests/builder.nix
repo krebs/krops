@@ -143,7 +143,10 @@ let
           null
       else {
         populate = toString (command sources targetPath);
-        inherit env interrupt output unexpected;
+        inherit env interrupt output;
+        # Nix warns about not writing lock files whenever populate looks
+        # at a flake, which populate leaves out.
+        unexpected = unexpected ++ [ "not writing modified lock file" ];
         expect = if expect' == "success" then null else expect'.fail;
         status = if expect' == "success" then null else expect'.status or null;
         # No phase gets around checking the canaries.

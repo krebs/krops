@@ -534,9 +534,11 @@ with import ./builder.nix args;
       };
     }))
     # The lock file gets rewritten or generated again when a source inputs
-    # get drawn from changes.
-    (modes "relock" ({ draw, flake, ... }: let
+    # get drawn from changes.  What Nix prints about a generated flake's lock
+    # file only gets printed then.
+    (modes "relock" ({ draw, flake, mode, ... }: let
       x.file = { path = "/fixtures/filesrc"; } // draw { dep.follows = "a"; };
+      generated = optional (mode == "generated");
     in {
       phases = [
         {
@@ -544,8 +546,17 @@ with import ./builder.nix args;
           check = ''
             expect_eq msg "$(nix_eval_online ${flake "x"}#msg)" top:alt,sub
           '';
+          output = generated "creating lock file";
         }
         {
+          sources = { inherit x; a.file = "/fixtures/alt"; };
+          check = ''
+            expect_eq msg "$(nix_eval_online ${flake "x"}#msg)" top:alt,sub
+          '';
+          unexpected = generated "lock file";
+        }
+        {
+          output = generated "creating lock file";
           sources = { inherit x; a.file = "/fixtures/alt2"; };
           check = ''
             expect_eq msg "$(nix_eval_online ${flake "x"}#msg)" top:alt2,sub
