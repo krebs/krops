@@ -58,9 +58,9 @@ and run `$(nix-build --no-out-link krops.nix)` to deploy the target machine.
 ## Requirements
 
 The deploying machine needs Nix and nixpkgs 23.11 or later.  krops builds
-populate, the program that delivers the sources, with nixpkgs' Rust the
-first time it's used, which fetches the program's dependencies from
-[crates.io](https://crates.io).
+[populate](pkgs/populate/README.md), the program that delivers the
+sources, with nixpkgs' Rust the first time it's used, which fetches the
+program's dependencies from [crates.io](https://crates.io).
 
 The target needs Nix, a POSIX shell, coreutils, findutils, rsync, and
 `patch` for sources with `patches`, and a remote target ssh access as
@@ -197,7 +197,7 @@ build` step.
 Name of the source containing the flake to deploy, optionally followed by `#`
 and the name of the NixOS configuration, e.g. `"myconf#myhost"`.  If the source
 draws inputs from other sources through a generated flake, that flake gets
-deployed, see [Flake inputs from sources](#flake-inputs-from-sources).  This
+deployed, see [Flake inputs from sources](pkgs/populate/README.md#flake-inputs-from-sources).  This
 makes `nixos-rebuild` use `--flake`, and requires Nix with flake support (Nix
 2.4 or later) on the build target.  Without the name of the NixOS
 configuration, `nixos-rebuild` uses the host name of the build target.
@@ -316,461 +316,49 @@ sets `-t` on the ssh command.
 
 ## The target directory
 
-Populate owns the target directory, `/var/src` by default: it replaces
-whatever is at the target path of a source, and with `prune` it removes
-everything else.  It doesn't change or remove anything outside:
-
-* Target paths must be absolute, must not be the root directory, and must not
-  contain `..`.  Source names must consist of letters, digits, and the
-  characters `._-`, not start with `-`, and be neither `.`, `..`, nor
-  `.populate`.  Anything else fails when evaluating.
-
-* A symlink at the target path of a source gets replaced by what the source
-  delivers, not followed, and populate says so.  To keep a source elsewhere,
-  e.g. on another disk or in memory, mount that place at the target path, or
-  make the target directory itself a symlink.  A Git work tree whose `.git`
-  is a symlink, or a file naming a repository elsewhere, gets replaced by a
-  `git` source as well.
-
-* A `git` source only uses a work tree whose `.git` directory contains no
-  symlinks, no `commondir` file and no linked work trees, and only the
-  configuration that `git clone` and populate write, and in which each
-  `.git` of a submodule is a file naming a repository in `.git/modules`.  Otherwise Git's
-  commands could change what's elsewhere, or run commands, so populating
-  fails, telling what's wrong, unless the source's `reclone` is set.  Git
-  runs no hooks.
-
-* A file in the target directory that has other hard links, e.g. one in
-  `/etc/nixos`, gets replaced by a copy of its own before rsync syncs it, so
-  the other ones keep their mode and time.  Populate writes its own files,
-  and replaces lock files it rewrites, by renaming new files into place, and
-  only makes directories writable that it removes.
-
-* Populate keeps its state in the sentinel, `.populate`, which becomes a
-  directory once there is state to keep.  Populating fails if the sentinel,
-  or a directory populate needs therein, is a symlink.
+populate owns the target directory, and doesn't change anything outside it.
+[populate's README](pkgs/populate/README.md#the-target-directory) says what
+that means.
 
 
 ## Source Types
 
-### `derivation`
-
-Nix expression to be built at the target machine.
-
-Supported attributes:
-
-* `text` -
-  Nix expression to be built.
-
-
-### `file`
-
-The file source type transfers local files (and folders) to the target
-using [`rsync`](https://rsync.samba.org/).
-
-Supported attributes:
-
-* `path` -
-  absolute path to files that should by transferred.
-
-* `useChecksum` (optional) -
-  boolean that controls whether file contents should be checked to decide
-  whether a file has changed.  This is useful when `path` points at files
-  with mangled timestamps, e.g. the Nix store.
-
-  The default value is `true` if `path` is a derivation, and `false` otherwise.
-
-* `filters` (optional)
-  List of filters that should be passed to [`rsync`](https://rsync.samba.org/).
-  Filters are specified as attribute sets with the attributes `type` and
-  `pattern`.  Supported filter types are `include` and `exclude`.
-  Checkout the filter rules section in the
-  [rsync manual](https://download.samba.org/pub/rsync/rsync.html)
-  for further information.
-
-* `deleteExcluded` (optional)
-  boolean that controls whether the excluded directories should be deleted
-  if they exist on the target. This is passed to the `--delete-excluded` option
-  of rsync. Defaults to `true`.
-
-* `insecureLinks` (optional) -
-  what to do if rsync can't read `.rsync-filter` files that apply to `path`:
-  the ones therein, and the ones in the directories above it.  rsync 3.5.0
-  and later open them more strictly than the files they transfer, and ignore
-  the ones they can't open, e.g. because a symlink on the way belongs to
-  neither root nor the user deploying, or, with rsync 3.5.0, because a
-  directory on the way may be entered but not read, like a home directory
-  with mode 711.  By default, with `null`, populating fails with an error
-  naming the file.  With `true`, rsync reads such files anyway
-  (`--insecure-links`), which also lets it pass such symlinks on the way to
-  the target path of a local target; with `false`, rsync syncs without them.
-  Both print a warning.  Older versions of rsync aren't affected.
-
-* `inputs` (optional) -
-  inputs of the flake in this source to draw from other sources, see
-  [Flake inputs from sources](#flake-inputs-from-sources).
-
-* `rewriteLock` (optional) -
-  boolean that controls whether inputs get drawn from other sources by
-  rewriting the lock file of the flake in this source, or else through a
-  generated flake, see [Flake inputs from sources](#flake-inputs-from-sources).
-  Defaults to `true`.
-
-
-### `flake`
-
-The flake source type delivers a flake to the target.  The flake gets
-archived locally using `nix flake archive`, which includes only files tracked
-by Git, so use a `file` source for work trees with untracked files.  The
-flake and its inputs get copied into the target's Nix store using `nix copy`,
-and the target path becomes a symlink to the flake's store path, registered
-as garbage collector root.  For flakes in a subdirectory, e.g.
-`git+file:/src/mono?dir=sub`, the symlink points at that subdirectory of the
-store path.  The inputs get garbage collector roots in
-`.populate/flake-inputs/<name>`, which turns the sentinel file into a
-directory.
-
-Supported attributes:
-
-* `fetchOnTarget` (optional) -
-  boolean that controls whether the target fetches the flake's inputs itself
-  instead of receiving them from the deploying machine.  The target then uses
-  the arguments recorded in the lock file, so inputs that refer to local paths
-  can only be fetched if the target has these paths as well; populating fails
-  otherwise, naming the input.  If the flake reference names a scheme that
-  doesn't refer to the deploying machine, e.g. `github:`, the target handles
-  the flake entirely on its own, and the deploying machine doesn't fetch it.
-  Otherwise the target fetches the flake itself as well if its locked
-  reference doesn't refer to the deploying machine, e.g. for indirect
-  references resolving to `github:` flakes, or else the flake gets
-  transferred using `rsync`, unless the target's Nix store has it already,
-  and added to the target's Nix store, where it gets the same store path as
-  on the deploying machine.  This requires Nix with flake support (Nix 2.4 or
-  later) on the target, and works for targets using `sudo`.  Defaults to
-  `false`.
-
-* `url` -
-  flake reference, e.g. the absolute path of a directory containing a
-  `flake.nix`.  Its lock file is used as is; populating fails if the lock
-  file needs to be updated.
-
-* `inputs` (optional) -
-  inputs of the flake in this source to draw from other sources, see
-  [Flake inputs from sources](#flake-inputs-from-sources).
-
-* `materialize` (optional) -
-  boolean that controls whether the target path becomes a writable copy
-  instead of a link into the store.  The copy gets made again only if what
-  it derives from changes: the delivered store path, the patches, or which
-  inputs get drawn from which sources.  Until then, changes made to it on the
-  target stay.  Nix copies it into the store whenever evaluating a flake
-  changed it, which is noticeable for big flakes like nixpkgs.  For a flake
-  in a subdirectory, only that subdirectory gets copied.  Defaults to
-  `false`.
-
-* `patches` (optional) -
-  list of paths of patches on the deploying machine, which get applied in
-  order with `patch -p1` on the target, in the directory the target path
-  shows.  Populating fails if a patch doesn't apply.  Defaults to `[]`.
-
-* `rewriteLock` (optional) -
-  boolean that controls whether inputs get drawn from other sources by
-  rewriting the lock file of the flake in this source, or else through a
-  generated flake, see [Flake inputs from sources](#flake-inputs-from-sources).
-  Defaults to `true`.
-
-Instead of an attribute set, the flake reference can be given as a string.
-
-The flake commands on the deploying machine run using krops' own Nix, so
-flakes don't need to be enabled there.  Without `fetchOnTarget`, the target
-only needs `nix-store`.  Because the copied store paths aren't signed, the
-target user must be allowed to import them, i.e. be `root` or a trusted user,
-and targets using `sudo` aren't supported.
-
-
-### `flake-input`
-
-The flake-input source type delivers an input of a flake, as recorded in the
-flake's lock file, to the target.  This makes the lock file of a flake the
-single place that pins, e.g., nixpkgs, for flakes as well as for `NIX_PATH`.
-It works like the `flake` source type, but delivers the selected input
-instead of the flake, so the target path becomes a symlink to the input's
-store path.  The inputs that the input's own lock file pins, which evaluating
-the input needs, get delivered as well, with garbage collector roots in
-`.populate/flake-inputs/<name>`.  An input without a lock file comes without
-its inputs, because locking it would change it.
-
-Because the target path points at the store path named by the lock file, it
-can be used in `NIX_PATH` as well as by flakes evaluated on the target,
-without network access.
-
-Supported attributes:
-
-* `url` -
-  flake reference of the flake whose input gets delivered, e.g. the absolute
-  path of a directory containing a `flake.nix`.  Its lock file is used as is;
-  populating fails if the lock file needs to be updated.
-
-* `name` -
-  name of the input to deliver.  Inputs of inputs are separated by `/`,
-  e.g. `stockholm/nixpkgs`, and resolved as the flake's lock file resolves
-  them, so an input that follows another one names the other one.
-
-* `requireInputs` (optional) -
-  boolean that controls whether populating fails if the inputs that the
-  input's own lock file pins can't be delivered, e.g. because the lock file
-  pins something unreachable, or lacks an input its `flake.nix` has.  With
-  `false`, populate prints a warning and delivers the input with the inputs
-  Nix locks when it adds what the lock file lacks, or else without its
-  inputs.  Evaluating the input as a flake then needs network access.
-  Defaults to `true`.
-
-* `fetchOnTarget` (optional) -
-  boolean that controls whether the target fetches the input itself instead
-  of receiving it from the deploying machine.  The target then uses the
-  arguments recorded in the lock file, so inputs that refer to local paths
-  can only be fetched if the target has these paths as well; populating fails
-  otherwise, naming the input.  This requires Nix with flake support (Nix 2.4
-  or later) on the target, and works for targets using `sudo`.  Defaults to
-  `false`.
-
-* `inputs` (optional) -
-  inputs of the flake in this source to draw from other sources, see
-  [Flake inputs from sources](#flake-inputs-from-sources).
-
-* `materialize` (optional) -
-  boolean that controls whether the target path becomes a writable copy
-  instead of a link into the store.  The copy gets made again only if what
-  it derives from changes: the delivered store path, the patches, or which
-  inputs get drawn from which sources.  Until then, changes made to it on the
-  target stay.  Nix copies it into the store whenever evaluating a flake
-  changed it, which is noticeable for big flakes like nixpkgs.  For a flake
-  in a subdirectory, only that subdirectory gets copied.  Defaults to
-  `false`.
-
-* `patches` (optional) -
-  list of paths of patches on the deploying machine, which get applied in
-  order with `patch -p1` on the target, in the directory the target path
-  shows.  Populating fails if a patch doesn't apply.  Defaults to `[]`.
-
-* `rewriteLock` (optional) -
-  boolean that controls whether inputs get drawn from other sources by
-  rewriting the lock file of the flake in this source, or else through a
-  generated flake, see [Flake inputs from sources](#flake-inputs-from-sources).
-  Defaults to `true`.
-
-Without `fetchOnTarget`, the same requirements as for the `flake` source type
-apply.
-
-Example:
-
-```nix
-{
-  nixpkgs.flake-input = {
-    url = toString ./.;
-    name = "nixpkgs";
-  };
-}
-```
-
-
-### `git`
-
-Git sources that will be fetched on the target machine.
-
-Supported attributes:
-
-* `url` -
-  URL of the Git repository that should be fetched.
-
-* `ref` -
-  Branch / tag / commit that should be fetched.  A branch or tag gets fetched
-  on every run, so the work tree follows it.  A commit, given by its hash or a
-  prefix thereof of at least four hex digits, only gets fetched if the work
-  tree lacks it, unless `fetchAlways` is set.  So a branch or tag whose name
-  consists of hex digits only counts as a commit.
-
-* `clean.exclude` -
-  List of patterns that should be excluded from Git cleaning.
-
-* `shallow` (optional)
-  boolean that controls whether only the requested commit ref. should be fetched
-  instead of the whole history, to save disk space and bandwith. Defaults to `false`.
-
-* `reclone` (optional) -
-  boolean that controls whether a work tree populate can't use, see
-  [The target directory](#the-target-directory), gets replaced by a fresh
-  clone, instead of failing.  Defaults to `false`.
-
-* `inputs` (optional) -
-  inputs of the flake in this source to draw from other sources, see
-  [Flake inputs from sources](#flake-inputs-from-sources).
-
-* `rewriteLock` (optional) -
-  boolean that controls whether inputs get drawn from other sources by
-  rewriting the lock file of the flake in this source, or else through a
-  generated flake, see [Flake inputs from sources](#flake-inputs-from-sources).
-  Defaults to `true`.
-
-
-### `pass`
-
-The pass source type transfers contents from a local
-[password store](https://www.passwordstore.org/) to the target machine.
-
-Supported attributes:
-
-* `dir` -
-  absolute path to the password store.
-
-* `name` -
-  sub-directory in the password store.
-
-
-### `passage`
-
-The passage source type decrypts files from a local
-[passage store](https://github.com/FiloSottile/passage)
-and transfers them to the target using
-[`rsync`](https://rsync.samba.org/).
-
-Supported attributes:
-
-* `dir` -
-  Path to the passage store.
-  For a partial transfer, this may point to a subdirectory.
-  Example: `~/.passage/store/hosts/MYHOSTNAME`
-
-* `identities_file` (optional) -
-  Path to the identities file.
-  Defaults to `~/.passage/identities`.
-
-* `age` (optional) -
-  Path of the age binary.
-  Defaults to `age` (absolute path gets resolved using `passage`'s search path.)
-
-
-### `pipe`
-
-Executes a local command, capture its stdout, and send that as a file to the
-target machine.
-
-Supported attributes:
-
-* `command` -
-  The (shell) command to run.
-
-### `symlink`
-
-Symlink to create at the target, relative to the target directory.
-This can be used to reference files in other sources.
-
-Supported attributes:
-
-* `target` -
-  Content of the symlink.  This is typically a relative path.
-
-* `inputs` (optional) -
-  inputs of the flake in this source to draw from other sources, see
-  [Flake inputs from sources](#flake-inputs-from-sources).
+`lib.evalSource` turns sources, written in Nix, into what `pkgs.populate`
+passes to populate.  [populate's
+README](pkgs/populate/README.md#source-types) describes the source types:
+`derivation`, `file`, `flake`, `flake-input`, `git`, `pass`, `passage`,
+`pipe`, and `symlink`.
 
 
 ## Flake inputs from sources
 
-Sources of type `file`, `flake`, `flake-input`, `git`, and `symlink` can
-declare which inputs of the flake they contain get drawn from other sources,
-in the style of `flake.nix`, where `follows` names a source instead of an
-input.  This makes flakes on the target use what krops delivers there, much
-like `NIX_PATH` does for Nix expressions.
-
-```nix
-{
-  nixpkgs.flake-input = {
-    url = toString ./.;
-    name = "nixpkgs";
-  };
-  crate2nix.flake = {
-    url = "github:nix-community/crate2nix";
-    inputs.nixpkgs.follows = "nixpkgs";
-  };
-  myconf.file = {
-    path = toString ./.;
-    inputs = {
-      crate2nix.follows = "crate2nix";
-      stockholm.inputs.nixpkgs.follows = "nixpkgs";
-    };
-  };
-}
-```
-
-Populate rewrites the lock file of the flake in each source that draws
-inputs from other sources, using `nix flake lock --override-input`, so the
-flake in the source itself uses the other sources.  `file` and `git` sources
-get their lock file rewritten in place.  `flake` and `flake-input` sources
-get delivered as a copy with the rewritten lock file, which gets added to the
-store, unless materialized, so the target path links to that instead of the
-delivered store path, as it does for patched ones.  A source drawing an input
-from a source that draws inputs itself uses that source as rewritten, so in
-the example above, myconf's crate2nix uses nixpkgs from the `nixpkgs` source as
-well.
-
-With `rewriteLock = false`, and for `symlink` sources, which point at other
-sources, the source stays as it is, and populate generates a flake in
-`.populate/flakes/<name>` instead, which re-exports the outputs of the flake
-in the source, with those inputs drawn from the other sources.  A source
-drawing an input from a source with a generated flake uses that flake.
-`writeDeploy`'s `flake` parameter uses a source's generated flake
+Sources can draw inputs of the flakes they contain from other sources, as
+[populate's README](pkgs/populate/README.md#flake-inputs-from-sources)
+describes.  `writeDeploy`'s `flake` uses a source's generated flake
 automatically.
-
-Sources in a Git work tree are referred to as `git+file:` (with submodules if
-there are any), all other sources as `path:`, with symlinks resolved.  Nix
-runs Git in a `git+file:` flake, with its configuration and hooks, so
-that's only for work trees whose `.git` directory a `git` source would use,
-see [The target directory](#the-target-directory), and has no hooks.  Lock
-files get rewritten or generated on every run, so they match the sources.
-Copies of `flake` and `flake-input` sources get made again only if the
-delivered store path, the patches, or the sources they draw inputs from
-change.  Inputs that get drawn from other sources don't get delivered with
-a `flake` or `flake-input` source, and neither does what they pin.
-Generated flakes and copies get removed once their sources no longer need
-them.  This requires Nix with flake support (Nix 2.4 or later) on the
-target.  Populating fails if a source that draws inputs from other sources
-contains no `flake.nix`, or if its flake has no such input, before anything
-changes.  Sources that inputs get drawn from don't need to be flakes, as long
-as the inputs drawing from them are declared with `flake = false`.
 
 
 ## Tests
 
-`tests/` contains NixOS VM tests for populate: one test per source type, one
-for features spanning sources, such as flake inputs from sources, one for edge
-cases of flakes, such as unusual lock files, one for staying inside the target
-directory, whatever links it contains, and one for the arguments `writeDeploy`
-passes to `nixos-rebuild`.  After every deploy, all tests check that nothing
-outside the target directory changed.  The tests deploy combinations of a
-source type's options to the deploying machine itself, to a remote target as
-`root`, and to a remote target using `sudo`, and check the result after
-deploying and after deploying again.  They cover every combination that a code
-path tells apart; the exhaustive tests add the remaining ones, e.g. drawing
-inputs combined with each of rsync's options.  Patches get covered by the
-features test.  The scenarios whose results depend on the version of rsync also
-run with rsync 3.4.1 and 3.5.0, which `tests/rsync.nix` builds, whatever
-version nixpkgs has.  The tests require KVM and nixpkgs with
-`pkgs.testers.runNixOSTest` (23.05 or later), and use `<nixpkgs>` by default.
+`tests/` contains NixOS VM tests for krops, using the VM machinery and the
+scenarios of [populate's tests](pkgs/populate/README.md#tests): `deploy`,
+for the arguments `writeDeploy` passes to `nixos-rebuild`, which a stand-in
+records, and `populate`, for `pkgs.populate`, running populate's scenarios
+that expect populate to refuse its arguments, which `pkgs.populate` does
+during evaluation, and those of populate's smoke test.  The tests require
+KVM and nixpkgs with `pkgs.testers.runNixOSTest` (23.05 or later), and use
+`<nixpkgs>` by default.
 
 ```sh
 nix-build tests                   # all tests, except the exhaustive ones
-nix-build tests -A flake          # the test for one source type
+nix-build tests -A deploy         # the test of writeDeploy
 nix-build tests -A exhaustive     # all exhaustive tests
-nix-build tests -A exhaustive.git # the remaining combinations of one test
-nix-build tests -A rsync-3-5-0    # the scenarios depending on rsync's version
-nix-build tests -A smoke          # a few scenarios of each kind, in one VM
+nix-build tests -A smoke          # a few scenarios of each, in one VM
 nix-build tests -A only --argstr only 'lock-hooks-.*'  # scenarios by name
 ```
 
-Populate is a program in Rust, in `pkgs/populate`, which
-[`pkgs/populate/docs/design.md`](pkgs/populate/docs/design.md) describes.
-`cargo test` in that directory runs its unit tests, without VMs.
+`-A only` selects from all of populate's scenarios and krops' own, all
+running through `pkgs.populate`.
 
 
 ## References

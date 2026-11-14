@@ -2,10 +2,12 @@
 
 ## Unreleased
 
-- Populate is a program written in Rust, which reads populate's arguments
-  as JSON.  The store gets one program for each version of krops, instead
-  of a script for each set of arguments.  `pkgs.populate`, `writeDeploy`,
-  and the other functions keep their arguments.
+- Populate is a program of its own, written in Rust, in `pkgs/populate`,
+  with a command line, a Nix library, a README, and tests of its own.  The
+  store gets one program for each version of krops, instead of a script for
+  each set of arguments.  `pkgs.populate-unwrapped` is the program;
+  `pkgs.populate`, `writeDeploy`, and the other functions keep their
+  arguments, and `pkgs.populate` also takes a target string.
 
 ## 1.31.1
 

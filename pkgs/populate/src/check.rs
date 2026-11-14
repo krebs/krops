@@ -1,14 +1,14 @@
-//! Checks of the sources and the target, the same as checks.nix makes during
-//! evaluation, so sources from anywhere else get checked as well.  Messages
-//! are the same.
+//! Checks of the sources and the target, the same as krops' checks.nix
+//! makes during evaluation, so sources from anywhere else get checked as
+//! well.  Messages are the same.
 
 use crate::spec::{Source, Spec};
 use serde_json::{Map, Value};
 use std::collections::BTreeMap;
 
-/// The checks in the order checks.nix makes them, the first failing one's
-/// message.  The target's host and user, which a command line gives, come
-/// first.
+/// The checks in the order krops' checks.nix makes them, the first failing
+/// one's message.  The target's host and user, which a command line gives,
+/// come first.
 pub fn spec(spec: &Spec) -> Result<(), String> {
     target_host(&spec.target.host, spec.target.user.as_deref())?;
     target_path(&spec.target.path)?;
@@ -267,7 +267,7 @@ pub fn inputs(sources: &BTreeMap<String, Source>) -> Result<(), String> {
     }
     // Depth-first search, with the path of sources on the way, which repeats
     // a source if drawing goes round in circles.  The message names the
-    // whole path, the way into the circle included, like checks.nix.
+    // whole path, the way into the circle included, like krops' checks.nix.
     fn visit<'a>(
         name: &'a str,
         drawn_from: &'a BTreeMap<&str, Vec<String>>,

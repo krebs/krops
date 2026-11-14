@@ -36,74 +36,13 @@ tools populate runs in front of `PATH`, and depends on the store paths in
 the sources, so building it builds them.  krops' `writeDeploy` and its
 other functions use `pkgs.populate`, so their arguments stay as they are.
 
-## Invocation
+## Command line and sources
 
-```
-populate [OPTION]... SOURCES [TARGET]
-```
-
-`SOURCES` is the path of a file containing the sources, or `-` for
-standard input.  `TARGET` is `[USER@][HOST][:PORT][PATH]`, parsed like
-krops' lib's `mkTarget` parses it: the user up to the first `@`, the host
-up to a `:` or a `/`, the port up to a `/`, and the path from there.  What
-it leaves out gets filled in when the program runs, as `mkTarget` would:
-the user from `LOGNAME`, the host with the machine's name, and the path
-with `/var/src`.  An empty user means ssh's default.
-
-| Option          | Meaning                                                 |
-|-----------------|---------------------------------------------------------|
-| `--backup`      | Copy the target directory to a backup first.            |
-| `--force`       | Create the target directory's sentinel if it's missing. |
-| `--prune`       | Remove what isn't a source from the target directory.   |
-| `--sudo`        | Deliver as root, via sudo on the target.                |
-| `--ssh-arg ARG` | Pass `ARG` to ssh; repeatable.                          |
-| `--user USER`   | The target's user, instead of `TARGET`'s.               |
-| `--host HOST`   | The target's host, e.g. one `TARGET` can't express.     |
-| `--port PORT`   | The port ssh connects to.                               |
-| `--path PATH`   | The target directory.                                   |
-| `--local`       | The target is the machine populate runs on.             |
-| `--remote`      | The target isn't, even if it looks so.                  |
-| `-h`, `--help`  | Print the usage and exit.                               |
-| `-V`, `--version` | Print populate's version and exit.                    |
-
-Options take their argument as the next argument or after `=`, and may
-come before, between, or after `SOURCES` and `TARGET`, up to `--`.  Exit
-status:
-
-- 0: populate delivered all sources.
-- 1: a check of the sources or the target failed, or delivering did, with
-  a message of its own.
-- The exit status of the command that failed, if delivering failed with
-  that, like the shell implementation does: e.g. 255 if ssh can't reach
-  the target, or 128 if git fetch fails.
-- 2: the command line is wrong, or the sources can't be read, aren't JSON,
-  or aren't sources.
-- 129, 130, 143: populate got SIGHUP, SIGINT, or SIGTERM, and stopped.
-
-## Sources
-
-The sources are a JSON object, of sources by name.  Each source is an
-object with the field `type`, the source's type, and a field named after
-the type, holding the source's settings:
-
-```json
-{ "nixpkgs": { "type": "git", "git": { "url": "https://...", "ref": "main" } } }
-```
-
-The types and their settings are those of `lib/types/populate.nix`, as
-`evalSource` returns them: with shorthands expanded, e.g. `file =
-"/etc/x"` as `{ "path": "/etc/x" }`, and without settings that are null.
-Settings with defaults may be left out.  The source types are
-`derivation`, `file`, `flake`, `flake-input`, `git`, `pass`, `passage`,
-`pipe`, and `symlink`.
-
-Fields and settings populate doesn't know are errors, so a misspelt option
-doesn't go unnoticed.  The sources carry no version: this is version 0, and
-a later version of populate that reads them differently will mark them.
-
-Store paths in the sources, e.g. of a `file` source that is a derivation,
-must exist when the program runs.  The script krops' `pkgs.populate`
-writes depends on them.  Something producing sources at run time has to build them first.
+[`../README.md`](../README.md) describes populate's command line, the
+sources, and what populate prints, which are its interface.  The program
+reads the sources into `spec::Sources`, and parses the target with
+`spec::TargetParts`, completing it with `run::Origin`, the user running
+populate and the machine's name, when it runs.
 
 ## Checks
 
@@ -128,24 +67,6 @@ Checks that depend on whether the target is local come on top, e.g.
 refusing to copy flakes to remote targets using sudo.  krops' `checks.nix`
 does that during evaluation too, where `pkgs.populate` decides whether the
 target is local.
-
-## Output
-
-What populate prints on standard error is part of its interface: people
-read it, and the tests check it.  For example:
-
-```
-populating 'host:/var/src/nixpkgs'...
-pruning 'host:/var/src/old'...
-replacing symlink 'host:/var/src/x', which points to '/elsewhere'...
-replacing the Git work tree 'host:/var/src/x', because ...
-```
-
-A target path in a message starts with `user@host:` for remote targets,
-without `user@` if the user is root or not set, and is a plain path for
-the local target.  Errors start with `error:` or `krops:`, warnings with
-`warning:`.  rsync's itemized changes appear as `%i %n%L %'''b/%'''l`, with sizes in
-units of 1024.
 
 ## Safety
 
@@ -190,6 +111,8 @@ Populate runs rsync, Git, ssh, and Nix as programs, found in `PATH`.
 - `nix-build tests -A smoke` runs the smoke test, a few scenarios covering
   each source type and each kind of target.
 - `nix-build tests` runs all scenarios but the exhaustive ones.
+- krops' tests run populate's scenarios that expect refusals, and those of
+  the smoke test, through krops' `pkgs.populate`, with `tests/builder.nix`.
 
 ## Status
 
