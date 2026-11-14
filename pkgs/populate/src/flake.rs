@@ -203,7 +203,8 @@ struct DerivedState<'a> {
     target_kind: &'a str,
     /// A line of sha256sum for each patch.
     patch_sums: &'a [String],
-    /// The hash of each source drawn from, or empty if it's in the store.
+    /// What tells whether each source drawn from changed: git and its
+    /// commit, its hash, or empty if it's in the store.
     hashes: &'a [String],
 }
 
@@ -230,10 +231,11 @@ impl<'a> DerivedState<'a> {
     }
 }
 
-/// The text whose hash is the key of a derived copy, like the shell
-/// implementation computes it: the original's path, the spec, the patches'
-/// sums, and, for a copy drawing inputs, nix flake lock's arguments and the
-/// hashes of the sources drawn from that aren't in the store.
+/// The text whose hash is the key of a derived copy: the original's path,
+/// the spec, the patches' sums, and, for a copy drawing inputs, nix flake
+/// lock's arguments and what tells whether the sources drawn from that
+/// aren't in the store changed: the commit of a Git work tree that Nix gets
+/// as git+file:, and else a hash of the source.
 fn key_text(
     original: &str,
     spec: &Value,
@@ -535,7 +537,7 @@ impl<'a> Flakes<'a> {
     /// the patches, or what inputs get drawn from which sources changes,
     /// and others also if the sources they draw inputs from change.  The
     /// key of a copy, in .populate/derived/<name>/key, is the hash of all
-    /// that.
+    /// that, see key_text.
     fn derive(&self, name: &str) -> Result<()> {
         let settings = &self.sources[name].settings;
         let materialize = bool_setting(settings, "materialize", false);

@@ -759,8 +759,8 @@ nix eval --impure --raw --expr '
 /// the definitions of prelude and DEFINITIONS.  Populate decides what to
 /// do, from what these send back.
 pub mod draw {
-    /// Defines own_lock DIR, apply_patches PATCH_DIR NAME, and write_key
-    /// KEY_FILE KEY.
+    /// Defines own_lock DIR, apply_patches PATCH_DIR NAME, write_key
+    /// KEY_FILE KEY, git_flake PATH, and clean_git_rev PATH.
     ///
     /// Nix rewrites lock files in place, which also changes what else is a
     /// hard link to the lock file, e.g. in a backup, or what it is a
@@ -774,6 +774,17 @@ pub mod draw {
     ///
     /// write_key writes KEY to a new file, which then replaces KEY_FILE, so
     /// nothing at its place gets written through, e.g. a symlink.
+    ///
+    /// git_flake PATH succeeds if Nix gets the directory at PATH as a
+    /// git+file: flake: if it has a .git directory that git_problems finds
+    /// nothing wrong with, and that has no hooks.  Nix runs Git in a
+    /// git+file: flake, with the repository's configuration and hooks, so
+    /// it only gets such ones.
+    ///
+    /// clean_git_rev PATH prints the commit HEAD of the Git work tree at
+    /// PATH points to, if git_flake PATH, and none of its tracked files
+    /// differ from that commit, which is all of it Nix uses then.  Git runs
+    /// without hooks and file system monitors.
     pub const DEFINITIONS: &str = r#"
 own_lock() {
   if test -e "$1"/flake.lock; then
@@ -796,6 +807,24 @@ write_key() {
   printf '%s\n' "$2" > "$key_file"
   mv -f "$key_file" "$1"
 }
+git_flake() {
+  ! test -L "$1"/.git && test -d "$1"/.git || return 1
+  git_flake_problems=$(git_problems "$1" 2>/dev/null) || return 1
+  test -z "$git_flake_problems" || return 1
+  if test -d "$1"/.git/hooks; then
+    test -z "$(find "$1"/.git/hooks -mindepth 1 ! -name '*.sample' | head -n 1)"
+  fi
+}
+clean_git_rev() (
+  git_flake "$1" || exit 1
+  cd "$1"
+  git() {
+    command git -c core.hooksPath=/dev/null -c core.fsmonitor=false "$@"
+  }
+  changes=$(git status --porcelain --untracked-files=no 2>/dev/null) || exit 1
+  test -z "$changes" || exit 1
+  git rev-parse --verify --quiet HEAD
+)
 "#;
 
     /// use_state SENTINEL NAME...
@@ -805,25 +834,14 @@ use_state "$@"
 
     /// resolve PATH...: prints, for each PATH, what's there and where it
     /// resolves to, as two fields, each ending in a null byte.  The first
-    /// holds d if PATH is a directory, g if it has a .git directory that
-    /// git_problems finds nothing wrong with, and that has no hooks, s if
-    /// it has .gitmodules, and f if it has flake.nix.  Nix runs Git in a
-    /// git+file: flake, with the repository's configuration and hooks, so
-    /// it only gets such ones.
+    /// holds d if PATH is a directory, g if git_flake PATH, s if it has
+    /// .gitmodules, and f if it has flake.nix.
     pub const RESOLVE: &str = r#"
 for path; do
   resolved=$(readlink -f "$path") || resolved=
   flags=
   if test -d "$path"; then flags=${flags}d; fi
-  if ! test -L "$path"/.git && test -d "$path"/.git; then
-    problems=$(git_problems "$path" 2>/dev/null) || problems=failed
-    if test -d "$path"/.git/hooks; then
-      hooks=$(find "$path"/.git/hooks -mindepth 1 ! -name '*.sample' | head -n 1)
-    else
-      hooks=
-    fi
-    if test -z "$problems" && test -z "$hooks"; then flags=${flags}g; fi
-  fi
+  if git_flake "$path"; then flags=${flags}g; fi
   if test -e "$path"/.gitmodules; then flags=${flags}s; fi
   if test -e "$path"/flake.nix; then flags=${flags}f; fi
   printf '%s\0%s\0' "$flags" "$resolved"
@@ -870,8 +888,10 @@ nix flake lock "$@" "$url" >&2
     /// ending in null bytes: where DIR/original resolves to, the key of the
     /// copy, the store path DIR/result links to, if the store has it, link
     /// or directory, if TARGET_PATH is one, a line of sha256sum for each
-    /// patch in PATCH_DIR, an empty field, and the hash of each DRAWN path,
-    /// or nothing if it resolves into the store.
+    /// patch in PATCH_DIR, an empty field, and what tells whether each
+    /// DRAWN path changed: nothing if it resolves into the store, git and
+    /// the commit, if clean_git_rev gives one, or else its hash, which
+    /// takes reading all of it.
     pub const DERIVED_STATE: &str = r#"
 dir=$1 target_path=$2 patch_dir=$3
 shift 3
@@ -905,7 +925,13 @@ for drawn; do
   drawn=$(readlink -f "$drawn")
   case $drawn in
     /nix/store/*) printf '\0' ;;
-    *) printf '%s\0' "$(nix-hash --type sha256 "$drawn")" ;;
+    *)
+      if rev=$(clean_git_rev "$drawn") && test -n "$rev"; then
+        printf 'git %s\0' "$rev"
+      else
+        printf '%s\0' "$(nix-hash --type sha256 "$drawn")"
+      fi
+      ;;
   esac
 done
 "#;
