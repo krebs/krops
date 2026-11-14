@@ -1,22 +1,24 @@
 # pkgs.populate: given populate's arguments, it checks them, and returns a
 # script running populate-unwrapped, the program in ../populate, with them,
 # the sources as JSON.
-{ coreutils, findutils, git, nix, openssh, pass, passage, rsync, writers
+{ coreutils, findutils, git, lib, nix, openssh, pass, passage, rsync, writers
 , populate-unwrapped
 , ...
 }@args:
 
-with import ../../lib;
+with lib;
+with builtins;
+with import ../../lib/with.nix { inherit lib; };
 
 let
-  checks = import ./checks.nix;
+  checks = import ./checks.nix { inherit lib; };
 
   # Arguments populate doesn't use, which overrides written for krops 1 may
   # set.  They come through ..., because callPackage would set named ones.
   unused = filter (name: args ? ${name}) [ "dash" "implementation" "jq" ];
   unexpected = attrNames (removeAttrs args ([
-    "coreutils" "findutils" "git" "nix" "openssh" "pass" "passage" "rsync"
-    "writers" "populate-unwrapped"
+    "coreutils" "findutils" "git" "lib" "nix" "openssh" "pass" "passage"
+    "rsync" "writers" "populate-unwrapped"
   ] ++ unused));
 
   # The parts of a target string, like mkTarget parses it, without its

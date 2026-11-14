@@ -18,7 +18,7 @@
 
 let
   inherit (pkgs) lib;
-  krops = import ../lib;
+  krops = import ../lib/with.nix { inherit lib; };
   populateTests = ../pkgs/populate/tests;
 
   inherit (import (populateTests + "/fixtures.nix")) gitHead gitFirst;

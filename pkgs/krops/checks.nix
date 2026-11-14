@@ -1,6 +1,10 @@
 # Checks of populate's arguments during evaluation.  Each returns true, or
-# throws an error naming what's wrong.
-with import ../../lib;
+# throws an error naming what's wrong.  lib is nixpkgs' lib.
+{ lib }:
+
+with lib;
+with builtins;
+with import ../../lib/with.nix { inherit lib; };
 
 {
   # Populate replaces and removes what's at the target paths of sources, so

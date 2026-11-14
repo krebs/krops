@@ -75,7 +75,9 @@ machine that uses them.
 
 krops' flake provides `populate`, `writeDeploy`, and the other functions
 described below as `lib.<system>`, and its `lib` directory provides
-`evalSource` and `mkTarget`:
+`evalSource` and `mkTarget`.  `lib/with.nix` is a function taking nixpkgs'
+lib, as below; `lib/default.nix` merges it, with `<nixpkgs/lib>`, into
+nixpkgs' lib and builtins:
 
 ```nix
 {
@@ -83,9 +85,9 @@ described below as `lib.<system>`, and its `lib` directory provides
   inputs.krops.url = "git+https://cgit.krebsco.de/krops";
   inputs.krops.inputs.nixpkgs.follows = "nixpkgs";
 
-  outputs = { self, krops, ... }: let
+  outputs = { self, krops, nixpkgs, ... }: let
     system = "x86_64-linux";
-    lib = import "${krops}/lib";
+    lib = import "${krops}/lib/with.nix" { inherit (nixpkgs) lib; };
   in {
     apps.${system}.deploy = {
       type = "app";
@@ -101,8 +103,8 @@ described below as `lib.<system>`, and its `lib` directory provides
 }
 ```
 
-krops evaluates `<nixpkgs/lib>`, environment variables, and `/etc/hostname`,
-which pure evaluation doesn't allow, so deploy with `nix run --impure .#deploy`.
+krops evaluates environment variables and `/etc/hostname`, which pure
+evaluation doesn't allow, so deploy with `nix run --impure .#deploy`.
 
 `pkgs.krops` provides the following functions.
 
@@ -150,7 +152,7 @@ pkgs.krops.writeDeploy "deploy" {
 }
 ```
 For more details about the `target` attribute, please check the `mkTarget`
-function in [lib/default.nix](lib/default.nix).
+function in [lib/with.nix](lib/with.nix).
 
 ### `allocateTTY` (optional, defaults to false)
 

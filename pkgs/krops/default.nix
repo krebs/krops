@@ -1,8 +1,10 @@
+{ expect, lib, nix, openssh, populate, writers }:
+
 let
-  lib = import ../../lib;
+  klib = import ../../lib/with.nix { inherit lib; };
 in
 
-{ expect, nix, openssh, populate, writers }: rec {
+rec {
 
   rebuild = {
     allocateTTY ? false,
@@ -18,8 +20,8 @@ in
     runShell target { inherit allocateTTY; }
       (withNixOutputMonitor target useNixOutputMonitor /* sh */ ''
         ${lib.optionalString (flake != null) /* sh */ ''
-          ${lib.shell.requireFlakes "deploying a flake"}
-          ${lib.shell.urlPath}
+          ${klib.shell.requireFlakes "deploying a flake"}
+          ${klib.shell.urlPath}
           # A Git work tree gets deployed as such.  Anything else gets
           # deployed as path:, not just by its path, which Nix takes for the
           # enclosing Git work tree, if any.  Nix refuses URLs with symlinks
@@ -36,7 +38,7 @@ in
           fi
         ''}
         NIX_PATH=${lib.escapeShellArg target.path} \
-        ${lib.optionalString (allocateTTY && lib.isLocalTarget target)
+        ${lib.optionalString (allocateTTY && klib.isLocalTarget target)
           # Without ssh, which allocates the terminal on remote targets.
           "${expect}/bin/unbuffer"} \
         nixos-rebuild ${lib.escapeShellArgs args} ${
@@ -58,12 +60,12 @@ in
         /bin/sh -c ${lib.escapeShellArg command}
       '';
     in
-      if lib.isLocalTarget target
+      if klib.isLocalTarget target
       then command'
       else
-        writers.writeDash "krops.${target.host}.${lib.firstWord command}" ''
+        writers.writeDash "krops.${target.host}.${klib.firstWord command}" ''
           exec ${openssh}/bin/ssh ${lib.escapeShellArgs (lib.flatten [
-            (lib.mkUserPortSSHOpts target)
+            (klib.mkUserPortSSHOpts target)
             (if allocateTTY then "-t" else "-T")
             target.extraOptions
             target.host
@@ -114,7 +116,7 @@ in
     source,
     target
   }: let
-    target' = lib.mkTarget target;
+    target' = klib.mkTarget target;
   in
     writers.writeDash name ''
       set -efu
@@ -139,8 +141,8 @@ in
     buildTarget' =
       if buildTarget == null
         then target'
-        else lib.mkTarget buildTarget;
-    target' = lib.mkTarget target;
+        else klib.mkTarget buildTarget;
+    target' = klib.mkTarget target;
     # A host as nixos-rebuild takes it.  Without a user, ssh decides.
     userHost = target:
       lib.optionalString (target.user != null && target.user != "")
@@ -153,7 +155,7 @@ in
       if flake == null then null
       else if !(source ? ${name}) then
         throw "krops: flake ${name} is not a source"
-      else if lib.hasGeneratedFlake source.${name} then
+      else if klib.hasGeneratedFlake source.${name} then
         ".populate/flakes/${flake}"
       else
         flake;
@@ -186,9 +188,9 @@ in
     target,
     trace ? false
   }: let
-    target' = lib.mkTarget target;
+    target' = klib.mkTarget target;
   in
-    assert lib.isLocalTarget target';
+    assert klib.isLocalTarget target';
     writers.writeDash name ''
       set -efu
       ${populate { inherit backup force prune source; target = target'; }} >&2

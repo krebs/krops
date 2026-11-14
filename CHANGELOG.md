@@ -8,6 +8,10 @@
   each set of arguments.  `pkgs.populate-unwrapped` is the program;
   `pkgs.populate`, `writeDeploy`, and the other functions keep their
   arguments, and `pkgs.populate` also takes a target string.
+- `lib/with.nix` is krops' lib without nixpkgs' lib, which it takes from
+  its caller, e.g. a flake's `nixpkgs.lib`.  `pkgs.krops`, `pkgs.populate`
+  and krops' flake use the nixpkgs lib they get, instead of
+  `<nixpkgs/lib>`, which `lib/default.nix` still merges with krops' lib.
 - A `passage` source's `identities_file` defaults to
   `~/.passage/identities` when populate runs, instead of during
   evaluation.
