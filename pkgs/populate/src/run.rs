@@ -107,6 +107,10 @@ pub struct Context {
     /// What nix flake metadata prints for flakes, by reference, so it's
     /// obtained only once, even if several sources use the same flake.
     metadata: std::cell::RefCell<std::collections::BTreeMap<String, serde_json::Value>>,
+    /// The paths of Git work trees on the target that git_problems found
+    /// nothing wrong with during this run, so finding that out, which
+    /// takes looking through all of the work tree, happens only once.
+    git_checked: std::cell::RefCell<std::collections::BTreeSet<String>>,
 }
 
 impl Context {
@@ -132,6 +136,7 @@ impl Context {
             ssh,
             ssh_nix,
             metadata: Default::default(),
+            git_checked: Default::default(),
         };
         context.write_ssh(&context.ssh, &context.ssh_options(true))?;
         context.write_ssh(&context.ssh_nix, &context.ssh_options(false))?;
@@ -253,6 +258,18 @@ impl Context {
             .borrow_mut()
             .insert(url.to_string(), metadata.clone());
         Ok(metadata)
+    }
+
+    /// Notes that git_problems found nothing wrong with the Git work tree
+    /// at path on the target.
+    pub fn git_checked(&self, path: &str) {
+        self.git_checked.borrow_mut().insert(path.to_string());
+    }
+
+    /// Whether git_problems found nothing wrong with the Git work tree at
+    /// path on the target during this run.
+    pub fn is_git_checked(&self, path: &str) -> bool {
+        self.git_checked.borrow().contains(path)
     }
 
     /// Runs shell code on the target, returning its output.

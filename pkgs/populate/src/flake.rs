@@ -323,16 +323,29 @@ impl<'a> Flakes<'a> {
         })
     }
 
+    /// Whether git_problems found nothing wrong with the Git work tree at
+    /// path during this run, as resolve and derived_state take it.
+    fn checked(&self, path: &str) -> &'static str {
+        if self.context.is_git_checked(path) {
+            "1"
+        } else {
+            ""
+        }
+    }
+
     /// Resolves paths on the target.
     fn resolve(&self, paths: &[String], flakes: bool) -> Result<Vec<Resolved>> {
-        let args: Vec<&str> = paths.iter().map(String::as_str).collect();
+        let mut args: Vec<&str> = Vec::new();
+        for path in paths {
+            args.extend([self.checked(path), path.as_str()]);
+        }
         let fields = self.fields(sh::draw::RESOLVE, flakes, &args)?;
         if fields.len() != 2 * paths.len() {
             return Err(Failure::Message(
                 "error: can't resolve paths on the target".to_string(),
             ));
         }
-        Ok(fields
+        let resolved: Vec<Resolved> = fields
             .chunks(2)
             .map(|field| Resolved {
                 path: field[1].clone(),
@@ -341,7 +354,13 @@ impl<'a> Flakes<'a> {
                 submodules: field[0].contains('s'),
                 flake: field[0].contains('f'),
             })
-            .collect())
+            .collect();
+        for (path, resolved) in paths.iter().zip(&resolved) {
+            if resolved.git {
+                self.context.git_checked(path);
+            }
+        }
+        Ok(resolved)
     }
 
     /// The flake URL of the source named name, at resolved: git+file: if
@@ -568,7 +587,9 @@ impl<'a> Flakes<'a> {
         };
 
         let mut state_args = vec![state.as_str(), target_path.as_str(), patch_dir.as_str()];
-        state_args.extend(drawn.iter().map(String::as_str));
+        for path in &drawn {
+            state_args.extend([self.checked(path), path.as_str()]);
+        }
         let fields = self.fields(sh::draw::DERIVED_STATE, false, &state_args)?;
         let DerivedState {
             original,

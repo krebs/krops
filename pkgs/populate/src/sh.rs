@@ -327,110 +327,125 @@ git_problems() (
 /// PATH a Git work tree of the repository at URL, with REF checked out,
 /// and everything removed that Git doesn't track, except what matches an
 /// EXCLUDE pattern.  SHALLOW, FETCH_ALWAYS, and RECLONE are flags, empty
-/// for false.  NAME is PATH's name in messages.
+/// for false.  NAME is PATH's name in messages.  Prints checked if
+/// git_problems found nothing wrong with the work tree that was there,
+/// which then is what's there, and else nothing; what commands print goes
+/// to standard error.
 pub fn git() -> String {
     LINKS.to_string()
         + GIT_PROBLEMS
         + r#"
-path=$1 name=$2 url=$3 ref=$4 shallow=$5 fetch_always=$6 reclone=$7
-shift 7
-# Hooks and commands a repository's configuration names run with Git's
-# commands, so populate's Git doesn't run any.  The configuration gets
-# checked as well, but Git also runs a hook it has itself.
-git() {
-  command git -c core.hooksPath=/dev/null -c core.fsmonitor=false "$@"
-}
-# A target path that doesn't look like a Git work tree gets removed, e.g.
-# when it had another type before.  A work tree that a symlink points to,
-# or whose .git is a symlink or a file naming a repository elsewhere, isn't
-# populate's own: fetching, resetting, and cleaning would change what's
-# elsewhere.
-remove_link "$path" "$name"
-if test -L "$path"/.git || ! test -d "$path"/.git; then
-  rm -fR "$path"
-fi
-# A .git directory can name places elsewhere too, which Git's commands
-# change, or commands, which they run.  Populate only uses a work tree
-# whose .git directory has nothing like that, and else replaces it if
-# reclone is set, or fails, telling why.
-if test -e "$path"; then
-  if problems=$(git_problems "$path"); then :; else
-    exit 1
+# What commands print goes to standard error.  None of them gets the
+# standard output, which populate reads to its end, so nothing they leave
+# running, e.g. git gc --auto, keeps populate waiting.
+checked=
+deliver_git() {
+  path=$1 name=$2 url=$3 ref=$4 shallow=$5 fetch_always=$6 reclone=$7
+  shift 7
+  # Hooks and commands a repository's configuration names run with Git's
+  # commands, so populate's Git doesn't run any.  The configuration gets
+  # checked as well, but Git also runs a hook it has itself.
+  git() {
+    command git -c core.hooksPath=/dev/null -c core.fsmonitor=false "$@"
+  }
+  # A target path that doesn't look like a Git work tree gets removed, e.g.
+  # when it had another type before.  A work tree that a symlink points to,
+  # or whose .git is a symlink or a file naming a repository elsewhere, isn't
+  # populate's own: fetching, resetting, and cleaning would change what's
+  # elsewhere.
+  remove_link "$path" "$name"
+  if test -L "$path"/.git || ! test -d "$path"/.git; then
+    rm -fR "$path"
   fi
-  if test -n "$problems"; then
-    if test -n "$reclone"; then
-      >&2 printf "replacing the Git work tree '%s', because %s...\n" \
-          "$name" "$problems"
-      rm -fR "$path"
-    else
-      >&2 printf 'error: populate doesn'"'"'t use the Git work tree %s, because %s.  Fix that, remove the work tree, or set the source'"'"'s reclone to true to replace it by a fresh clone.\n' \
-          "$name" "$problems"
+  # A .git directory can name places elsewhere too, which Git's commands
+  # change, or commands, which they run.  Populate only uses a work tree
+  # whose .git directory has nothing like that, and else replaces it if
+  # reclone is set, or fails, telling why.
+  if test -e "$path"; then
+    if problems=$(git_problems "$path"); then :; else
       exit 1
     fi
-  fi
-fi
-if ! test -e "$path"; then
-  if test -n "$shallow"; then
-    git init "$path"
-  else
-    git clone --recurse-submodules -- "$url" "$path"
-  fi
-fi
-cd "$path"
-if ! origin=$(git config remote.origin.url); then
-  git remote add -- origin "$url"
-elif test "$origin" != "$url"; then
-  git remote set-url -- origin "$url"
-fi
-# A commit, given by its hash or a prefix thereof, gets fetched only if the
-# work tree lacks it, unless fetchAlways is set.  After --, a ref can't be
-# taken for an option.  A branch or tag gets
-# fetched on every run, so the work tree follows it: resetting to its name
-# would reset to a local branch, which fetching doesn't move.
-fetch() {
-  if test -n "$shallow"; then
-    git fetch --depth=1 origin -- "$1"
-  else
-    git fetch origin -- "$1"
-  fi
-}
-fetch_commit() {
-  if test -n "$shallow"; then
-    fetch "$hash"
-  else
-    git fetch origin
-  fi
-}
-if printf %s "$ref" | grep -Eqx '[0-9a-f]{4,40}'; then
-  hash=$ref
-  if ! test "$(git log --format=%H -1)" = "$hash"; then
-    if test -n "$fetch_always"; then
-      fetch_commit
-    elif ! git log -1 "$hash" >/dev/null 2>&1; then
-      fetch_commit
+    if test -n "$problems"; then
+      if test -n "$reclone"; then
+        >&2 printf "replacing the Git work tree '%s', because %s...\n" \
+            "$name" "$problems"
+        rm -fR "$path"
+      else
+        >&2 printf 'error: populate doesn'"'"'t use the Git work tree %s, because %s.  Fix that, remove the work tree, or set the source'"'"'s reclone to true to replace it by a fresh clone.\n' \
+            "$name" "$problems"
+        exit 1
+      fi
+    else
+      checked=1
     fi
   fi
-else
-  fetch "$ref"
-  hash=$(git rev-parse --verify 'FETCH_HEAD^{commit}')
+  if ! test -e "$path"; then
+    if test -n "$shallow"; then
+      git init "$path"
+    else
+      git clone --recurse-submodules -- "$url" "$path"
+    fi
+  fi
+  cd "$path"
+  if ! origin=$(git config remote.origin.url); then
+    git remote add -- origin "$url"
+  elif test "$origin" != "$url"; then
+    git remote set-url -- origin "$url"
+  fi
+  # A commit, given by its hash or a prefix thereof, gets fetched only if the
+  # work tree lacks it, unless fetchAlways is set.  After --, a ref can't be
+  # taken for an option.  A branch or tag gets
+  # fetched on every run, so the work tree follows it: resetting to its name
+  # would reset to a local branch, which fetching doesn't move.
+  fetch() {
+    if test -n "$shallow"; then
+      git fetch --depth=1 origin -- "$1"
+    else
+      git fetch origin -- "$1"
+    fi
+  }
+  fetch_commit() {
+    if test -n "$shallow"; then
+      fetch "$hash"
+    else
+      git fetch origin
+    fi
+  }
+  if printf %s "$ref" | grep -Eqx '[0-9a-f]{4,40}'; then
+    hash=$ref
+    if ! test "$(git log --format=%H -1)" = "$hash"; then
+      if test -n "$fetch_always"; then
+        fetch_commit
+      elif ! git log -1 "$hash" >/dev/null 2>&1; then
+        fetch_commit
+      fi
+    fi
+  else
+    fetch "$ref"
+    hash=$(git rev-parse --verify 'FETCH_HEAD^{commit}')
+  fi
+  # Also if HEAD is there already, unless no tracked file differs from it:
+  # rewriting a lock file in place, e.g., changes the work tree, and stages
+  # the lock file if Nix created it.
+  head=$(git rev-parse --verify --quiet HEAD) || head=
+  commit=$(git rev-parse --verify --quiet "$hash^{commit}") || commit=
+  changes=$(git status --porcelain --untracked-files=no) || changes=unknown
+  if test -z "$head" || test "$head" != "$commit" || test -n "$changes"; then
+    git reset --hard "$hash"
+  fi
+  git submodule update --init --recursive
+  n=$#
+  while test "$n" -gt 0; do
+    set -- "$@" -e "$1"
+    shift
+    n=$((n - 1))
+  done
+  git clean -dfx "$@"
+}
+deliver_git "$@" >&2
+if test -n "$checked"; then
+  printf checked
 fi
-# Also if HEAD is there already, unless no tracked file differs from it:
-# rewriting a lock file in place, e.g., changes the work tree, and stages
-# the lock file if Nix created it.
-head=$(git rev-parse --verify --quiet HEAD) || head=
-commit=$(git rev-parse --verify --quiet "$hash^{commit}") || commit=
-changes=$(git status --porcelain --untracked-files=no) || changes=unknown
-if test -z "$head" || test "$head" != "$commit" || test -n "$changes"; then
-  git reset --hard "$hash" >&2
-fi
-git submodule update --init --recursive
-n=$#
-while test "$n" -gt 0; do
-  set -- "$@" -e "$1"
-  shift
-  n=$((n - 1))
-done
-git clean -dfx "$@"
 "#
 }
 
@@ -766,7 +781,8 @@ nix eval --impure --raw --expr '
 /// do, from what these send back.
 pub mod draw {
     /// Defines own_lock DIR, apply_patches PATCH_DIR NAME, write_key
-    /// KEY_FILE KEY, git_flake PATH, and clean_git_rev PATH.
+    /// KEY_FILE KEY, git_flake PATH CHECKED, and clean_git_rev PATH
+    /// CHECKED.
     ///
     /// Nix rewrites lock files in place, which also changes what else is a
     /// hard link to the lock file, e.g. in a backup, or what it is a
@@ -781,16 +797,18 @@ pub mod draw {
     /// write_key writes KEY to a new file, which then replaces KEY_FILE, so
     /// nothing at its place gets written through, e.g. a symlink.
     ///
-    /// git_flake PATH succeeds if Nix gets the directory at PATH as a
-    /// git+file: flake: if it has a .git directory that git_problems finds
-    /// nothing wrong with, and that has no hooks.  Nix runs Git in a
+    /// git_flake PATH CHECKED succeeds if Nix gets the directory at PATH
+    /// as a git+file: flake: if it has a .git directory that git_problems
+    /// finds nothing wrong with, and that has no hooks.  Nix runs Git in a
     /// git+file: flake, with the repository's configuration and hooks, so
-    /// it only gets such ones.
+    /// it only gets such ones.  If CHECKED isn't empty, git_problems found
+    /// nothing wrong already, so that doesn't get checked again: it takes
+    /// looking through all of the work tree, e.g. all of nixpkgs.
     ///
-    /// clean_git_rev PATH prints the commit HEAD of the Git work tree at
-    /// PATH points to, if git_flake PATH, and none of its tracked files
-    /// differ from that commit, which is all of it Nix uses then.  Git runs
-    /// without hooks and file system monitors.
+    /// clean_git_rev PATH CHECKED prints the commit HEAD of the Git work
+    /// tree at PATH points to, if git_flake PATH CHECKED, and none of its
+    /// tracked files differ from that commit, which is all of it Nix uses
+    /// then.  Git runs without hooks and file system monitors.
     pub const DEFINITIONS: &str = r#"
 own_lock() {
   if test -e "$1"/flake.lock; then
@@ -815,19 +833,26 @@ write_key() {
 }
 git_flake() {
   ! test -L "$1"/.git && test -d "$1"/.git || return 1
-  git_flake_problems=$(git_problems "$1" 2>/dev/null) || return 1
-  test -z "$git_flake_problems" || return 1
+  if test -z "$2"; then
+    git_flake_problems=$(git_problems "$1" 2>/dev/null) || return 1
+    test -z "$git_flake_problems" || return 1
+  fi
   if test -d "$1"/.git/hooks; then
     test -z "$(find "$1"/.git/hooks -mindepth 1 ! -name '*.sample' | head -n 1)"
   fi
 }
 clean_git_rev() (
-  git_flake "$1" || exit 1
+  git_flake "$1" "$2" || exit 1
   cd "$1"
   git() {
     command git -c core.hooksPath=/dev/null -c core.fsmonitor=false "$@"
   }
-  changes=$(git status --porcelain --untracked-files=no 2>/dev/null) || exit 1
+  # Without writing the index: in a copy of a work tree, e.g. in a file
+  # source, that makes it differ from the original's, so the next run
+  # copies it again, unless the original's changed in the same second,
+  # keeping its size, which rsync doesn't notice.  Then the work tree
+  # differs from its index, which Nix refuses to lock.
+  changes=$(git --no-optional-locks status --porcelain --untracked-files=no 2>/dev/null) || exit 1
   test -z "$changes" || exit 1
   git rev-parse --verify --quiet HEAD
 )
@@ -838,16 +863,19 @@ clean_git_rev() (
 use_state "$@"
 "#;
 
-    /// resolve PATH...: prints, for each PATH, what's there and where it
-    /// resolves to, as two fields, each ending in a null byte.  The first
-    /// holds d if PATH is a directory, g if git_flake PATH, s if it has
-    /// .gitmodules, and f if it has flake.nix.
+    /// resolve CHECKED PATH...: prints, for each pair of CHECKED and PATH,
+    /// what's at PATH and where it resolves to, as two fields, each ending
+    /// in a null byte.  The first holds d if PATH is a directory, g if
+    /// git_flake PATH CHECKED, s if it has .gitmodules, and f if it has
+    /// flake.nix.
     pub const RESOLVE: &str = r#"
-for path; do
+while test $# -gt 0; do
+  checked=$1 path=$2
+  shift 2
   resolved=$(readlink -f "$path") || resolved=
   flags=
   if test -d "$path"; then flags=${flags}d; fi
-  if git_flake "$path"; then flags=${flags}g; fi
+  if git_flake "$path" "$checked"; then flags=${flags}g; fi
   if test -e "$path"/.gitmodules; then flags=${flags}s; fi
   if test -e "$path"/flake.nix; then flags=${flags}f; fi
   printf '%s\0%s\0' "$flags" "$resolved"
@@ -888,16 +916,17 @@ own_lock "$dir"
 nix flake lock "$@" "$url" >&2
 "#;
 
-    /// derived_state DIR TARGET_PATH PATCH_DIR DRAWN...: removes what an
-    /// interrupted run left in the source's derived state DIR, and prints
-    /// what tells whether the copy there needs to be made again, as fields
-    /// ending in null bytes: where DIR/original resolves to, the key of the
-    /// copy, the store path DIR/result links to, if the store has it, link
-    /// or directory, if TARGET_PATH is one, a line of sha256sum for each
-    /// patch in PATCH_DIR, an empty field, and what tells whether each
-    /// DRAWN path changed: nothing if it resolves into the store, git and
-    /// the commit, if clean_git_rev gives one, or else its hash, which
-    /// takes reading all of it.
+    /// derived_state DIR TARGET_PATH PATCH_DIR CHECKED DRAWN...: removes
+    /// what an interrupted run left in the source's derived state DIR, and
+    /// prints what tells whether the copy there needs to be made again, as
+    /// fields ending in null bytes: where DIR/original resolves to, the key
+    /// of the copy, the store path DIR/result links to, if the store has
+    /// it, link or directory, if TARGET_PATH is one, a line of sha256sum
+    /// for each patch in PATCH_DIR, an empty field, and what tells whether
+    /// the DRAWN path of each pair of CHECKED and DRAWN changed: nothing if
+    /// it resolves into the store, git and the commit, if clean_git_rev
+    /// DRAWN CHECKED gives one, or else its hash, which takes reading all
+    /// of it.
     pub const DERIVED_STATE: &str = r#"
 dir=$1 target_path=$2 patch_dir=$3
 shift 3
@@ -927,12 +956,13 @@ if test -n "$patch_dir"; then
   done
 fi
 printf '\0'
-for drawn; do
-  drawn=$(readlink -f "$drawn")
+while test $# -gt 0; do
+  checked=$1 drawn=$(readlink -f "$2")
+  shift 2
   case $drawn in
     /nix/store/*) printf '\0' ;;
     *)
-      if rev=$(clean_git_rev "$drawn") && test -n "$rev"; then
+      if rev=$(clean_git_rev "$drawn" "$checked") && test -n "$rev"; then
         printf 'git %s\0' "$rev"
       else
         printf '%s\0' "$(nix-hash --type sha256 "$drawn")"

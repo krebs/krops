@@ -9,7 +9,7 @@ use crate::spec::{Source, Spec};
 use serde_json::{Map, Value};
 use std::fs;
 use std::path::PathBuf;
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 /// Checks the sentinel, makes a backup if asked, delivers each source, and
 /// prunes if asked.
@@ -157,7 +157,13 @@ fn deliver(
                 flag("reclone"),
             ];
             args.extend(excludes);
-            context.run(&sh::git(), &args)
+            // With standard input, which Git may ask for credentials on.
+            let mut command = context.shell(&sh::git(), &args);
+            command.stdin(Stdio::inherit());
+            if run::output(&mut command)? == "checked" {
+                context.git_checked(path);
+            }
+            Ok(())
         }
         "pass" => {
             let dir = string(settings, "dir")?;

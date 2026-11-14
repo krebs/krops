@@ -738,6 +738,58 @@ with import ./builder.nix args;
         }
       ];
     }))
+    # Like rewrite-cache-git, with a git source, which populate checks
+    # once per run, when delivering it, and the flakes step doesn't check
+    # again.
+    (s "rewrite-cache-gitsource" (let
+      sources = {
+        x.flake-input = {
+          url = "/fixtures/top"; name = "dep"; inherit fetchOnTarget;
+          inputs.inner.follows = "g";
+        };
+        g.git = { url = "git://deployer/rewrite-cache-gitsource.git"; ref = "master"; };
+      };
+      commit = who: ''
+        cd /tmp/rewrite-cache-gitsource
+        echo '{ outputs = _: { who = "${who}"; }; }' > flake.nix
+        git add flake.nix
+        git -c user.name=krops -c user.email=spam@krebsco.de commit -q -m ${who}
+        git push -q -f /fixtures/git/rewrite-cache-gitsource.git master
+      '';
+    in {
+      prepareDeployer = ''
+        rm -fR /tmp/rewrite-cache-gitsource /fixtures/git/rewrite-cache-gitsource.git
+        git init -q --bare /fixtures/git/rewrite-cache-gitsource.git
+        git init -q -b master /tmp/rewrite-cache-gitsource
+      '' + commit "gitsource";
+      phases = [
+        {
+          inherit sources;
+          check = checkFlake { attr = "greeting"; expected = "dep+gitsource"; } + ''
+            grep -q '"type": "git"' "$T"/x/flake.lock ||
+              fail "g isn't referred to as git+file:"
+          '';
+          mutate = ''
+            readlink "$T"/x > "$T".first
+            stat -c %y "$T"/.populate/derived/x/key > "$T".key
+          '';
+        }
+        {
+          inherit sources;
+          check = ''
+            expect_eq "store path" "$(readlink "$T"/x)" "$(cat "$T".first)"
+            expect_eq "copy made at" "$(stat -c %y "$T"/.populate/derived/x/key)" "$(cat "$T".key)"
+          '';
+          mutateDeployer = commit "gitsource2";
+        }
+        {
+          inherit sources;
+          check = checkFlake { attr = "greeting"; expected = "dep+gitsource2"; } + ''
+            test "$(readlink "$T"/x)" != "$(cat "$T".first)" || fail "store path unchanged"
+          '';
+        }
+      ];
+    }))
     # A materialized input is a writable copy, patched and with a rewritten
     # lock file, which gets made again only when what it derives from
     # changes, and becomes a link again when not materialized anymore.
