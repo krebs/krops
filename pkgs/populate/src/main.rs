@@ -1,6 +1,7 @@
 //! populate [OPTION]... SOURCES [TARGET]: delivers the sources in the JSON
 //! file SOURCES, or standard input for -, to the target directory TARGET.
-//! See README.md.
+//! populate shell [OPTION]... TARGET SCRIPT runs the shell code SCRIPT on
+//! TARGET.  See README.md.
 
 mod check;
 mod cli;
@@ -10,6 +11,7 @@ mod populate;
 mod rsync;
 mod run;
 mod sh;
+mod shell;
 mod spec;
 
 use std::io::Read;
@@ -22,8 +24,8 @@ const USAGE: u8 = 2;
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let options = match cli::parse(&args) {
-        Ok(cli::Command::Help) => {
-            print!("{}", cli::USAGE);
+        Ok(cli::Command::Help(usage)) => {
+            print!("{usage}");
             return ExitCode::SUCCESS;
         }
         Ok(cli::Command::Version) => {
@@ -31,16 +33,16 @@ fn main() -> ExitCode {
             return ExitCode::SUCCESS;
         }
         Ok(cli::Command::Populate(options)) => options,
+        Ok(cli::Command::Shell(options)) => return shell::shell(options),
         Err(message) => {
+            // The usage lines of the command the arguments are for.
+            let usage = if args.first().map(String::as_str) == Some("shell") {
+                cli::SHELL_USAGE.lines().take(1).collect::<Vec<_>>()
+            } else {
+                cli::USAGE.lines().take(2).collect::<Vec<_>>()
+            };
             eprintln!("populate: {message}");
-            eprint!(
-                "{}",
-                cli::USAGE
-                    .lines()
-                    .next()
-                    .map(|l| format!("{l}\n"))
-                    .unwrap_or_default()
-            );
+            eprintln!("{}", usage.join("\n"));
             return ExitCode::from(USAGE);
         }
     };

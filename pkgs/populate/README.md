@@ -86,6 +86,35 @@ Exit status:
   or aren't sources.
 - 129, 130, 143: populate got SIGHUP, SIGINT, or SIGTERM, and stopped.
 
+### populate shell
+
+```
+populate shell [OPTION]... TARGET SCRIPT
+```
+
+`populate shell` runs the shell code `SCRIPT` with `/bin/sh` on `TARGET`,
+reached like populate reaches it: directly if it's local, else via ssh.
+`SCRIPT` gets `local` or `remote` as `$1`, telling which, e.g. for using
+something on the local machine.  `TARGET`'s path is unused.  krops runs
+`nixos-rebuild` on targets with it.
+
+| Option            | Meaning                                                 |
+|-------------------|---------------------------------------------------------|
+| `--sudo`          | Run `SCRIPT` as root, via sudo on the target.           |
+| `--ssh-arg ARG`   | Pass `ARG` to ssh; repeatable.                          |
+| `--user USER`     | The target's user; empty for ssh's default.             |
+| `--host HOST`     | The target's host.                                      |
+| `--port PORT`     | The port ssh connects to.                               |
+| `--local`         | The target is the machine populate runs on.             |
+| `--remote`        | The target isn't, even if it looks so.                  |
+| `--tty`           | Give `SCRIPT` a terminal, if the target is remote.      |
+| `--local-only`    | Fail, without running `SCRIPT`, unless it's local.      |
+| `-h`, `--help`    | Print the usage and exit.                               |
+
+The exit status is `SCRIPT`'s, or ssh's, if ssh fails, 1 if
+`--local-only` fails, and 2 if the command line is wrong.  A file of
+sources named `shell` needs another name for populate, e.g. `./shell`.
+
 
 ## Sources
 
