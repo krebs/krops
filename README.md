@@ -355,15 +355,19 @@ automatically.
 `tests/` contains NixOS VM tests for krops, using the VM machinery and the
 scenarios of [populate's tests](pkgs/populate/README.md#tests): `deploy`,
 for the arguments `writeDeploy` passes to `nixos-rebuild`, which a stand-in
-records, and `populate`, for `pkgs.populate`, running populate's scenarios
+records, `populate`, for `pkgs.populate`, running populate's scenarios
 that expect populate to refuse its arguments, which `pkgs.populate` does
-during evaluation, and those of populate's smoke test.  The tests require
+during evaluation, and those of populate's smoke test, and `pure`, for
+evaluating krops' lib from a flake, and, exhaustively, deploying with
+`writeDeploy` from a flake, which evaluates nixpkgs, and copies it, without
+`.git`, into the store.  The tests require
 KVM and nixpkgs with `pkgs.testers.runNixOSTest` (23.05 or later), and use
 `<nixpkgs>` by default.
 
 ```sh
 nix-build tests                   # all tests, except the exhaustive ones
 nix-build tests -A deploy         # the test of writeDeploy
+nix-build tests -A pure           # the test of pure evaluation
 nix-build tests -A exhaustive     # all exhaustive tests
 nix-build tests -A smoke          # a few scenarios of each, in one VM
 nix-build tests -A only --argstr only 'lock-hooks-.*'  # scenarios by name

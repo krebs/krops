@@ -130,4 +130,40 @@ in
     }];
   })) (if targetKind == "sudo" then [ false ] else [ false true ])) targetKinds;
 
+
+  # Pure evaluation, as flakes evaluate by default: of krops' lib, and of
+  # writeDeploy, deploying what that makes, with a target string, which
+  # makes the same derivation as evaluating on the host, which builds it.
+  # That evaluates nixpkgs, so it's exhaustive.
+  pure = [
+    (scenario {
+      name = "pure-lib";
+      targetKind = "local";
+      phases = [{
+        sources.x.file = "/fixtures/alt";
+        deploy.pure = "lib";
+      }];
+    })
+    (scenario {
+      name = "pure-deploy";
+      targetKind = "remote";
+      exhaustive = true;
+      prepare = ''
+        rm -f /tmp/nixos-rebuild.log /etc/nixos/flake.nix
+      '';
+      phases = [{
+        sources.x.file = "/fixtures/alt";
+        deploy = {
+          pure = "deploy";
+          target = "root@${remoteHost}/var/krops/pure-deploy";
+        };
+        check = ''
+          test -e "$T"/x/flake.nix || fail "x/flake.nix missing"
+          expect_eq NIX_PATH "$(sed -n 2p /tmp/nixos-rebuild.log)" "$T"
+          expect_eq arguments "$(sed -n 3p /tmp/nixos-rebuild.log)" switch
+        '';
+      }];
+    })
+  ];
+
 }

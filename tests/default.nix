@@ -1,10 +1,10 @@
 # NixOS VM tests for krops, with the VM machinery and the scenarios of
 # populate's tests, in ../pkgs/populate/tests: deploy, for writeDeploy's
-# arguments to nixos-rebuild, and populate, for pkgs.populate, running
+# arguments to nixos-rebuild, populate, for pkgs.populate, running
 # populate's scenarios that expect populate to refuse its arguments, which
 # pkgs.populate does during evaluation here, and the scenarios of
 # populate's smoke test, with target attribute sets as mkTarget returns
-# them.  Build all with nix-build tests, or one with, e.g., nix-build tests
+# them, and pure, for pure evaluation, see ./pure.nix.  Build all with nix-build tests, or one with, e.g., nix-build tests
 # -A deploy.  The exhaustive tests add the combinations of options that no
 # code path tells apart from the ones the others cover; build them with
 # nix-build tests -A exhaustive.  The smoke test runs a few scenarios of
@@ -38,8 +38,12 @@ let
     };
   };
 
+  pure = import ./pure.nix { inherit pkgs; };
+
   # A phase runs pkgs.populate, or writeDeploy with a stand-in for
-  # nixos-rebuild.
+  # nixos-rebuild, or, if deploy's pure is set, a pure evaluation: of
+  # krops' lib, if it's lib, or of writeDeploy, if it's deploy, running
+  # what that makes.
   run = {
     source, backup, force, prune, deploy, targetKind, targetPath,
   }: let
@@ -47,10 +51,13 @@ let
       inherit source backup force prune;
       target = targets.${targetKind} targetPath;
     };
+    deployArgs = args // { useNixOutputMonitor = false; } // deploy;
   in
     if deploy == null then pkgs.populate args
-    else pkgs.krops.writeDeploy "deploy"
-      (args // { useNixOutputMonitor = false; } // deploy);
+    else if deploy.pure or null == "lib" then pure.lib
+    else if deploy.pure or null == "deploy" then
+      pure.deploy (removeAttrs deployArgs [ "pure" ])
+    else pkgs.krops.writeDeploy "deploy" deployArgs;
 
   builderArgs = {
     inherit lib run;
@@ -70,13 +77,14 @@ let
 
   # Names of the scenarios of the smoke test, besides populate's.
   smokeNames = import (populateTests + "/smoke.nix") ++ [
+    "pure-lib"
     "deploy-local-buildTarget0-etcFlake0-flakefile-targetString0"
     "deploy-remote-buildTarget0-etcFlake0-flakenone-targetString1"
     "deploy-sudo-allocateTTY"
   ];
 
   scenarios = {
-    inherit (kropsScenarios) deploy;
+    inherit (kropsScenarios) deploy pure;
     populate = builtins.filter
       (scenario: scenario.refusals || builtins.elem scenario.name smokeNames)
       populateScenarios;
