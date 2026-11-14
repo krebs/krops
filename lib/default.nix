@@ -4,60 +4,8 @@ let {
 
   lib = nixpkgs.lib // builtins // {
 
-    evalSource = let
-      eval = source: lib.evalModules {
-        modules = lib.singleton {
-          _file = toString ./.;
-          imports = map (source: { inherit source; }) (lib.toList source);
-          options.source = lib.mkOption {
-            default = {};
-            type = lib.types.attrsOf lib.types.source;
-          };
-        };
-      };
-      sanitize = x: lib.getAttr (lib.typeOf x) {
-        bool = x;
-        list = map sanitize x;
-        set = lib.mapAttrs
-                (lib.const sanitize)
-                (lib.filterAttrs
-                  (name: value: name != "_module" && value != null) x);
-        string = x;
-      };
-    in
-      # This function's return value can be used as pkgs.populate input.
-      source: sanitize (eval source).config.source;
-
-    # Inputs a source draws from other sources, as list of attribute sets like
-    # { path = [ "stockholm" "nixpkgs" ]; source = "nixpkgs"; }.
-    flakeFollows = source: let
-      flatten = prefix: inputs: lib.concatLists (lib.mapAttrsToList
-        (name: input:
-          lib.optional (input.follows or null != null) {
-            path = prefix ++ [ name ];
-            source = input.follows;
-          } ++
-          flatten (prefix ++ [ name ]) (input.inputs or {}))
-        inputs);
-    in
-      flatten [] (source.${source.type}.inputs or {});
-
-    # Tells whether a source's inputs get drawn from other sources by a
-    # generated flake in .populate/flakes, instead of by rewriting the lock
-    # file of the flake in the source.  Symlink sources point at other
-    # sources, whose lock files stay as they are.
-    hasGeneratedFlake = source:
-      lib.flakeFollows source != [] &&
-      (source.type == "symlink" || !(source.${source.type}.rewriteLock or true));
-
-    # Tells whether a flake or flake-input source gets delivered as a copy,
-    # which gets patched, gets its lock file rewritten, or is materialized.
-    derivesFlake = source: let
-      source' = source.${source.type};
-    in
-      lib.elem source.type [ "flake" "flake-input" ] &&
-      (source'.materialize or false || source'.patches or [] != [] ||
-       (source'.rewriteLock or true && lib.flakeFollows source != []));
+    # What populate's Nix library defines.
+    inherit (populate.lib) evalSource flakeFollows hasGeneratedFlake derivesFlake;
 
     maybeHostName = default: let
       # We're parsing /etc/hostname here because reading
@@ -153,9 +101,11 @@ let {
     test = re: x: lib.isString x && lib.testString re x;
     testString = re: x: lib.match re x != null;
 
-    types = nixpkgs.lib.types // import ./types { lib = body; };
+    types = nixpkgs.lib.types // populate.lib.types;
   };
 
   nixpkgs.lib = import <nixpkgs/lib>;
+
+  populate.lib = import ../pkgs/populate/lib { lib = nixpkgs.lib; };
 
 }

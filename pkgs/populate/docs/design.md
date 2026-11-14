@@ -1,15 +1,16 @@
 # Populate's design
 
-Populate delivers sources to a target directory.  It consists of two parts:
+Populate delivers sources to a target directory.  It consists of:
 
-- Nix code, which turns populate's arguments into a command line: the
-  sources as `evalSource` returns them, as JSON, the target, and the
-  options.  It checks the arguments during evaluation, so mistakes show
-  early.
-- A program, which reads the sources and delivers them to the target its
-  command line names.  It knows nothing about Nix expressions: whatever
-  produces sources as JSON can drive it.
+- A program, which reads the sources as JSON and delivers them to the
+  target its command line names.  It knows nothing about Nix expressions:
+  whatever produces sources as JSON can drive it.
+- A Nix library, `lib`, with the types of sources, which describe how to
+  write them in Nix, and `evalSource`, which turns sources written so into
+  the JSON the program reads.
 
+krops uses both: its `pkgs.populate` turns populate's arguments into a
+command line, and checks them during evaluation, so mistakes show early.
 So there is one program for each version of populate, instead of a script
 for each set of arguments, and the program can be written in any language.
 This directory holds the program in Rust.  Another implementation, e.g. in
@@ -18,20 +19,22 @@ the same tests.
 
 ## Nix side
 
-`default.nix` is `pkgs.populate`.  Given populate's arguments, `{ backup ?
-false, force ? false, prune ? false, source, target }`, it checks them with
-`checks.nix`, and returns a script running the program with the sources as
-JSON on file descriptor 3, so the commands populate runs keep standard
-input.  A target string goes to the program as it is.  A target attribute
-set, as `mkTarget` returns it, goes part by part, as options, with
-`--local` or `--remote` as krops' lib's `isLocalTarget` decides during
-evaluation, like the other functions of krops.  The script puts the tools
-populate runs in front of `PATH`, and depends on the store paths in the
-sources, so building it builds them.  `rustProgram` is the program, by
-default built by `program.nix`.
+`default.nix` builds the program: `nix-build` in this directory, or
+`callPackage`, as krops' `pkgs.populate-unwrapped`.  `lib/default.nix` is
+the Nix library, taking nixpkgs' lib.
 
-`writeDeploy` and the other functions of `pkgs.krops` use `pkgs.populate`,
-so their arguments stay as they are.
+krops' `pkgs.populate`, in its `pkgs/krops/populate.nix`, is populate's Nix
+API there.  Given populate's arguments, `{ backup ? false, force ? false,
+prune ? false, source, target }`, it checks them with krops'
+`pkgs/krops/checks.nix`, and returns a script running the program with the
+sources as JSON on file descriptor 3, so the commands populate runs keep
+standard input.  A target string goes to the program as it is.  A target
+attribute set, as `mkTarget` returns it, goes part by part, as options,
+with `--local` or `--remote` as krops' lib's `isLocalTarget` decides
+during evaluation, like the other functions of krops.  The script puts the
+tools populate runs in front of `PATH`, and depends on the store paths in
+the sources, so building it builds them.  krops' `writeDeploy` and its
+other functions use `pkgs.populate`, so their arguments stay as they are.
 
 ## Invocation
 
@@ -99,13 +102,13 @@ doesn't go unnoticed.  The sources carry no version: this is version 0, and
 a later version of populate that reads them differently will mark them.
 
 Store paths in the sources, e.g. of a `file` source that is a derivation,
-must exist when the program runs.  The script `default.nix` writes depends
-on them.  Something producing sources at run time has to build them first.
+must exist when the program runs.  The script krops' `pkgs.populate`
+writes depends on them.  Something producing sources at run time has to build them first.
 
 ## Checks
 
-The program checks the sources and the target as `checks.nix` does, with
-the same messages:
+The program checks the sources and the target as krops' `checks.nix` does
+during evaluation, with the same messages:
 
 - The target's host isn't empty, and neither it nor its user starts with
   `-`, so ssh can't take them for options.  `checks.nix` doesn't check
@@ -122,9 +125,9 @@ the same messages:
   since `evalSource` checks the types.
 
 Checks that depend on whether the target is local come on top, e.g.
-refusing to copy flakes to remote targets using sudo.  `checks.nix` does
-that during evaluation too, where `default.nix` decides whether the target
-is local.
+refusing to copy flakes to remote targets using sudo.  krops' `checks.nix`
+does that during evaluation too, where `pkgs.populate` decides whether the
+target is local.
 
 ## Output
 

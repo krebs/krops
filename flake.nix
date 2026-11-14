@@ -20,7 +20,8 @@
         let
           pkgs = nixpkgs.legacyPackages.${system};
           krops = pkgs.callPackage ./pkgs/krops { inherit populate; };
-          populate = pkgs.callPackage ./pkgs/populate {};
+          populate = pkgs.callPackage ./pkgs/krops/populate.nix { inherit populate-unwrapped; };
+          populate-unwrapped = pkgs.callPackage ./pkgs/populate {};
         in {
           inherit populate;
           inherit (krops) rebuild runShell withNixOutputMonitor writeCommand writeDeploy writeTest;
