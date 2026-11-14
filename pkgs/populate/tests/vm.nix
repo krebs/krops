@@ -29,7 +29,7 @@ let
     })
     scenarios));
 
-  common = { pkgs, ... }: {
+  common = { config, pkgs, ... }: {
     imports = [ module ];
     # The plan refers to all scripts the scenarios run.  Being part of the
     # system, they survive the scenarios collecting garbage.
@@ -52,6 +52,17 @@ let
     systemd.oomd.enable = false;
     virtualisation.memorySize = 2048;
     virtualisation.diskSize = 4096;
+    networking.useNetworkd = true;
+    systemd.network.networks = let
+      qemu-common = import (pkgs.path + "/nixos/lib/qemu-common.nix") {
+        inherit lib; inherit (pkgs) stdenv;
+      };
+      mac = i: lib.toLower
+        (qemu-common.qemuNicMac i.vlan config.virtualisation.test.nodeNumber);
+    in
+      lib.mapAttrs' (_: i: lib.nameValuePair "40-${i.name}" {
+        matchConfig = lib.mkForce { PermanentMACAddress = mac i; };
+      }) config.virtualisation.allInterfaces;
   };
 
 in pkgs.testers.runNixOSTest {
