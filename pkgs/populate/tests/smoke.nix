@@ -7,7 +7,7 @@
   "git-local-shallow1-refs"
   "symlink-local-absolute0-inputs0"
   "pass-remote-storepass"
-  "passage-sudo-agedefault-dirstore"
+  "passage-sudo-agedefault-dirstore-identitieshome"
   "pipe-local"
   "derivation-remote"
   "flake-local-fetchOnTarget0-inputsrewrite-kindgit-materialize0"

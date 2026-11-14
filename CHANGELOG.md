@@ -8,6 +8,9 @@
   each set of arguments.  `pkgs.populate-unwrapped` is the program;
   `pkgs.populate`, `writeDeploy`, and the other functions keep their
   arguments, and `pkgs.populate` also takes a target string.
+- A `passage` source's `identities_file` defaults to
+  `~/.passage/identities` when populate runs, instead of during
+  evaluation.
 
 ## 1.31.1
 

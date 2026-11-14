@@ -432,17 +432,23 @@ with import ./builder.nix args;
     };
   });
 
+  # identities_file defaults to the identities in the home directory.
   passage = matrix "passage" {
     age = [ "default" "path" ];
     dir = [ "store" "subdir" ];
+    identities = [ "file" "home" ];
   } (flags: _: {
+    exhaustive = flags.identities == "home" &&
+      (flags.age != "default" || flags.dir != "store");
     phases = twice {
       sources.x.passage = {
         dir = "/fixtures/passage/store" + optionalString (flags.dir == "subdir") "/x";
+      } // optionalAttrs (flags.identities == "file") {
         identities_file = "/fixtures/passage/identities";
       } // optionalAttrs (flags.age == "path") {
         age = agePath;
       };
+      env = optionalString (flags.identities == "home") "HOME=/fixtures/passage-home";
       check = ''
         expect_eq a "$(cat "$T"/x/${optionalString (flags.dir == "store") "x/"}a)" secret-a
       '';

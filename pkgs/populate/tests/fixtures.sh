@@ -346,6 +346,10 @@ printf 'secret-a\n' |
   PASSAGE_DIR=/fixtures/passage/store \
   PASSAGE_IDENTITIES_FILE=/fixtures/passage/identities \
   passage insert -m x/a >/dev/null
+# A home directory with the identities where passage sources look for them
+# by default.
+mkdir -p /fixtures/passage-home/.passage
+cp /fixtures/passage/identities /fixtures/passage-home/.passage/identities
 
 # pipe: a command for the pipe source type.
 cat > /fixtures/pipe <<'SH'

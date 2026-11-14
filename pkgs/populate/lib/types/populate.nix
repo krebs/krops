@@ -294,9 +294,11 @@
         dir = lib.mkOption {
           type = lib.types.pathname;
         };
+        # Populate defaults to ~/.passage/identities when it runs, which
+        # evaluation can't tell in pure mode.
         identities_file = lib.mkOption {
-          default = toString ~/.passage/identities;
-          type = lib.types.pathname;
+          default = null;
+          type = lib.types.nullOr lib.types.pathname;
         };
       };
     };

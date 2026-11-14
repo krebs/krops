@@ -104,7 +104,7 @@ fn known_settings(kind: &str) -> &'static [(&'static str, Kind, bool)] {
         "passage" => &[
             ("age", String, true),
             ("dir", String, true),
-            ("identities_file", String, true),
+            ("identities_file", String, false),
         ],
         "pipe" => &[("command", Absolute, true)],
         "symlink" => &[("target", String, true), ("inputs", Inputs, false)],

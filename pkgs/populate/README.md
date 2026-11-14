@@ -473,7 +473,7 @@ Supported attributes:
 
 * `identities_file` (optional) -
   Path to the identities file.
-  Defaults to `~/.passage/identities`.
+  Defaults to `~/.passage/identities`, of the user running populate.
 
 * `age` (optional) -
   Path of the age binary.

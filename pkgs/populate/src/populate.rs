@@ -195,13 +195,20 @@ fn deliver(
         "passage" => {
             let host = context.target.host.split('.').next().unwrap_or_default();
             let mut command = run::local_shell(sh::local::PASSAGE, &[host], &workdir);
-            for (variable, key) in [
-                ("PASSAGE_AGE", "age"),
-                ("PASSAGE_DIR", "dir"),
-                ("PASSAGE_IDENTITIES_FILE", "identities_file"),
-            ] {
+            for (variable, key) in [("PASSAGE_AGE", "age"), ("PASSAGE_DIR", "dir")] {
                 command.env(variable, string(settings, key)?);
             }
+            let identities = match settings.get("identities_file").and_then(Value::as_str) {
+                Some(file) => file.to_string(),
+                None => match std::env::var("HOME") {
+                    Ok(home) if !home.is_empty() => format!("{home}/.passage/identities"),
+                    _ => return Err(Failure::Message(
+                        "populate: HOME isn't set, so the passage source has no identities_file"
+                            .to_string(),
+                    )),
+                },
+            };
+            command.env("PASSAGE_IDENTITIES_FILE", identities);
             run::status(&mut command)?;
             rsync::transfer(
                 context,
