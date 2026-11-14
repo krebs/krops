@@ -14,14 +14,17 @@ krops is a lightweight toolkit to deploy NixOS systems, remotely or locally.
 
 ## Minimal Example
 
-Create a file named `krops.nix` (name doesn't matter) with following content:
+Create a file named `krops.nix` (name doesn't matter) with following content,
+with the hash that `nix-prefetch-git --url https://cgit.krebsco.de/krops
+--rev refs/tags/v2.0.0` prints, which Nix also reports when evaluating it
+with `lib.fakeHash`:
 
 ```nix
 let
   krops = (import <nixpkgs> {}).fetchgit {
-    url = https://cgit.krebsco.de/krops/;
-    rev = "v1.25.0";
-    sha256 = "07mg3iaqjf1w49vmwfchi7b1w55bh7rvsbgicp2m47gnj9alwdb6";
+    url = "https://cgit.krebsco.de/krops";
+    rev = "refs/tags/v2.0.0";
+    hash = (import <nixpkgs> {}).lib.fakeHash;
   };
 
   pkgs = import "${krops}/pkgs" {};
@@ -374,7 +377,9 @@ nix-build tests -A only --argstr only 'lock-hooks-.*'  # scenarios by name
 ```
 
 `-A only` selects from all of populate's scenarios and krops' own, all
-running through `pkgs.populate`.
+running through `pkgs.populate`.  Evaluating the tests also checks that the
+minimal example fetches the newest version in the [changelog](CHANGELOG.md),
+or, with unreleased changes, one at least as new as the newest release.
 
 
 ## References

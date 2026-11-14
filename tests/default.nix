@@ -134,10 +134,33 @@ let
       throw "tests: no scenario's name matches ${builtins.toJSON only}"
     else
       selected;
+  # The version of krops the README's example fetches, which is the
+  # CHANGELOG's newest, or, with unreleased changes, at least the newest
+  # released, so a release can't leave the README behind.  The README can't
+  # name the release's hash, which covers the README.
+  checkReadmeVersion = let
+    lines = file: lib.splitString "\n" (builtins.readFile file);
+    matches = regex: file: lib.concatMap
+      (line: let m = builtins.match regex line; in
+        if m == null then [] else m)
+      (lines file);
+    readme = matches ''.*rev = "refs/tags/v([0-9.]+)";.*'' ../README.md;
+    headings = matches "## (.*)" ../CHANGELOG.md;
+    newest = lib.findFirst (heading: heading != "Unreleased") null headings;
+  in
+    if builtins.length readme != 1 then
+      throw "tests: README.md doesn't name one version of krops to fetch"
+    else if lib.head headings == "Unreleased" then
+      builtins.compareVersions (lib.head readme) newest >= 0 ||
+        throw "tests: README.md fetches krops ${lib.head readme}, older than the newest release in CHANGELOG.md, ${newest}"
+    else
+      lib.head readme == newest ||
+        throw "tests: README.md fetches krops ${lib.head readme}, but the newest release in CHANGELOG.md is ${newest}";
 in
 
 # The remote target must not count as local wherever this gets evaluated.
 assert !(krops.isLocalTarget (targets.remote "/"));
+assert checkReadmeVersion;
 
   testsOf false ""
   # Not built by nix-build tests either, which runs these scenarios anyway.
