@@ -414,9 +414,15 @@ else
   fetch "$ref"
   hash=$(git rev-parse --verify 'FETCH_HEAD^{commit}')
 fi
-# Also if HEAD is there already: rewriting a lock file in place, e.g.,
-# changes the work tree, and stages the lock file if Nix created it.
-git reset --hard "$hash" >&2
+# Also if HEAD is there already, unless no tracked file differs from it:
+# rewriting a lock file in place, e.g., changes the work tree, and stages
+# the lock file if Nix created it.
+head=$(git rev-parse --verify --quiet HEAD) || head=
+commit=$(git rev-parse --verify --quiet "$hash^{commit}") || commit=
+changes=$(git status --porcelain --untracked-files=no) || changes=unknown
+if test -z "$head" || test "$head" != "$commit" || test -n "$changes"; then
+  git reset --hard "$hash" >&2
+fi
 git submodule update --init --recursive
 n=$#
 while test "$n" -gt 0; do

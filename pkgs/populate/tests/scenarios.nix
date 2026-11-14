@@ -305,11 +305,13 @@ with import ./builder.nix args;
         mutate = ''
           echo junk > "$T"/x/junk
           echo keepme > "$T"/x/keepme
+          echo changed > "$T"/x/two
         '';
       }
       {
         sources = sources gitHead;
         check = check + ''
+          expect_eq two "$(cat "$T"/x/two)" two
           test ! -e "$T"/x/junk || fail "junk not cleaned"
           ${if flags.cleanExclude then ''
             test -e "$T"/x/keepme || fail "keepme cleaned"
