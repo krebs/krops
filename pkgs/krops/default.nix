@@ -1,7 +1,23 @@
-{ expect, lib, nix, openssh, populate, writers }:
+{ expect, lib, nix, openssh, populate, populate-unwrapped, writers }:
 
 let
   klib = import ../../lib/with.nix { inherit lib; };
+  targets = import ./target.nix { inherit lib; };
+
+  # What populate and populate shell get for target: a string as it is, so
+  # populate fills in what it leaves out when it runs, and an attribute set
+  # with mkTarget's defaults.
+  given = target:
+    if builtins.isString target then target else klib.mkTarget target;
+
+  # Shell code running populate shell with options, for running the shell
+  # code command on target.
+  populateShell = options: target: command: /* sh */ ''
+    PATH=${lib.makeBinPath [ openssh ]}''${PATH:+:$PATH} \
+    ${populate-unwrapped}/bin/populate shell ${lib.escapeShellArgs (
+      options ++ targets.shellArgs (given target) command
+    )}
+  '';
 in
 
 rec {
@@ -12,13 +28,26 @@ rec {
     useNixOutputMonitor
   }:
   args: target: let
+    inherit (klib.mkTarget target) path;
     # The flake's directory in the target directory, and the name of the
     # NixOS configuration with its #, if any.
     flakeDir = lib.head (lib.splitString "#" flake);
     flakeAttr = lib.removePrefix flakeDir flake;
   in
-    runShell target { inherit allocateTTY; }
-      (withNixOutputMonitor target useNixOutputMonitor /* sh */ ''
+    runShell target { inherit allocateTTY; } (
+      # Without ssh, which allocates the terminal on remote targets, unbuffer
+      # gives nixos-rebuild one.  populate shell tells whether the target is
+      # local as $1, which nix-shell doesn't pass on, so it goes into the
+      # environment.
+      lib.optionalString allocateTTY /* sh */ ''
+        if test "$1" = local; then
+          krops_unbuffer=${expect}/bin/unbuffer
+        else
+          krops_unbuffer=
+        fi
+        export krops_unbuffer
+      '' +
+      withNixOutputMonitor target useNixOutputMonitor /* sh */ ''
         ${lib.optionalString (flake != null) /* sh */ ''
           ${klib.shell.requireFlakes "deploying a flake"}
           ${klib.shell.urlPath}
@@ -26,7 +55,7 @@ rec {
           # deployed as path:, not just by its path, which Nix takes for the
           # enclosing Git work tree, if any.  Nix refuses URLs with symlinks
           # on the way, which the target directory may be, or the source.
-          flake=$(readlink -f ${lib.escapeShellArg "${target.path}/${flakeDir}"})
+          flake=$(readlink -f ${lib.escapeShellArg "${path}/${flakeDir}"})
           if test -e "$flake"/.git; then
             if test -e "$flake"/.gitmodules; then
               flake=git+file:$(url_path "$flake")?submodules=1
@@ -37,10 +66,8 @@ rec {
             flake=path:$(url_path "$flake")
           fi
         ''}
-        NIX_PATH=${lib.escapeShellArg target.path} \
-        ${lib.optionalString (allocateTTY && klib.isLocalTarget target)
-          # Without ssh, which allocates the terminal on remote targets.
-          "${expect}/bin/unbuffer"} \
+        NIX_PATH=${lib.escapeShellArg path} \
+        ${lib.optionalString allocateTTY "$krops_unbuffer"} \
         nixos-rebuild ${lib.escapeShellArgs args} ${
           if flake != null then
             ''--flake "$flake"${lib.escapeShellArg flakeAttr}''
@@ -51,27 +78,12 @@ rec {
         }
       '');
 
+  # Shell code running the shell code command on target, reached like
+  # populate reaches it, with local or remote as $1, telling whether the
+  # target is local.
   runShell = target: {
     allocateTTY ? false
-  }: command:
-    let
-      command' = /* sh */ ''
-        ${lib.optionalString target.sudo "sudo"} \
-        /bin/sh -c ${lib.escapeShellArg command}
-      '';
-    in
-      if klib.isLocalTarget target
-      then command'
-      else
-        writers.writeDash "krops.${target.host}.${klib.firstWord command}" ''
-          exec ${openssh}/bin/ssh ${lib.escapeShellArgs (lib.flatten [
-            (klib.mkUserPortSSHOpts target)
-            (if allocateTTY then "-t" else "-T")
-            target.extraOptions
-            target.host
-            command'
-          ])}
-        '';
+  }: populateShell (lib.optional allocateTTY "--tty") target;
 
   withNixOutputMonitor = target: mode_: command: let
     mode =
@@ -93,7 +105,7 @@ rec {
         (${command}) 2>&1 | nom
       '';
       pessimistic = /* sh */ ''
-        NIX_PATH=${lib.escapeShellArg target.path} \
+        NIX_PATH=${lib.escapeShellArg (klib.mkTarget target).path} \
         nix-shell -p nix-output-monitor --run ${lib.escapeShellArg optimistic}
       '';
       true = /* sh */ ''
@@ -120,8 +132,8 @@ rec {
   in
     writers.writeDash name ''
       set -efu
-      ${populate { inherit backup force prune source; target = target'; }}
-      ${runShell target' { inherit allocateTTY; } (command target'.path)}
+      ${populate { inherit backup force prune source; target = given target; }}
+      ${runShell target { inherit allocateTTY; } (command target'.path)}
     '';
 
   writeDeploy = name: {
@@ -143,11 +155,15 @@ rec {
         then target'
         else klib.mkTarget buildTarget;
     target' = klib.mkTarget target;
-    # A host as nixos-rebuild takes it.  Without a user, ssh decides.
+    # A host as nixos-rebuild takes it.  Without a user, ssh decides.  Pure
+    # evaluation can't tell the machine's name, which mkTarget defaults the
+    # host to.
     userHost = target:
       lib.optionalString (target.user != null && target.user != "")
         "${target.user}@" +
-      target.host;
+      (if target.host != null then target.host
+       else throw "krops: writeDeploy: a target with a separate buildTarget needs a host in pure evaluation");
+    separateBuild = buildTarget' != target';
     # The source's generated flake, if it draws inputs from other sources.
     flake' = let
       name = lib.head (lib.splitString "#" flake);
@@ -163,20 +179,20 @@ rec {
     lib.traceIf (fast != null) "writeDeploy: it's now always fast, setting the `fast` attribute is deprecated and will be removed in future" (
       writers.writeDash name ''
         set -efu
-        ${lib.optionalString (buildTarget' != target')
-          (populate { inherit backup force prune source; target = buildTarget'; })}
-        ${populate { inherit backup force prune source; target = target'; }}
+        ${lib.optionalString separateBuild
+          (populate { inherit backup force prune source; target = given buildTarget; })}
+        ${populate { inherit backup force prune source; target = given target; }}
         ${rebuild { flake = flake'; inherit allocateTTY useNixOutputMonitor; } ([
           operation
         ] ++ lib.optionals crossDeploy [
           "--no-build-nix"
-        ] ++ lib.optionals (buildTarget' != target') [
+        ] ++ lib.optionals separateBuild [
           "--build-host" (userHost buildTarget')
           "--target-host" (userHost target')
-        ] ++ lib.optionals (buildTarget' != target' && target'.sudo) [
+        ] ++ lib.optionals (separateBuild && target'.sudo) [
           # nixos-rebuild runs on the target itself via sudo otherwise.
           "--use-remote-sudo"
-        ]) buildTarget'}
+        ]) (if separateBuild then buildTarget else target)}
       ''
     );
 
@@ -190,10 +206,12 @@ rec {
   }: let
     target' = klib.mkTarget target;
   in
-    assert klib.isLocalTarget target';
+    # Pure evaluation can't tell, so populate shell tells when it runs.
+    assert targets.pure || klib.isLocalTarget target';
     writers.writeDash name ''
       set -efu
-      ${populate { inherit backup force prune source; target = target'; }} >&2
+      ${populateShell [ "--local-only" ] target "true"}
+      ${populate { inherit backup force prune source; target = given target; }} >&2
       NIX_PATH=${lib.escapeShellArg target'.path} \
       ${nix}/bin/nix-build \
           -A system \

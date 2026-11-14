@@ -13,6 +13,14 @@
   and krops' flake use the nixpkgs lib they get, instead of
   `<nixpkgs/lib>`.  `lib/default.nix` stays for backwards compatibility,
   merging `<nixpkgs/lib>`, builtins, and `lib/with.nix`.
+- krops works in pure evaluation, e.g. in flakes without `--impure`.
+  Target strings go to populate as they are, also from `writeDeploy`,
+  `writeCommand`, and `writeTest`, and `runShell`, which runs
+  `nixos-rebuild`, runs the new `populate shell`, which decides whether a
+  target is local when it runs.  In pure evaluation, `mkTarget` leaves the
+  user and the host null, and target attribute sets leave whether they're
+  local to populate, which also refuses to copy flakes to targets using
+  sudo then.  `runShell` returns shell code, also for remote targets.
 - A `passage` source's `identities_file` defaults to
   `~/.passage/identities` when populate runs, instead of during
   evaluation.

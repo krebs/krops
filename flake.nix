@@ -19,7 +19,7 @@
       lib = forAllSystems (system:
         let
           pkgs = nixpkgs.legacyPackages.${system};
-          krops = pkgs.callPackage ./pkgs/krops { inherit populate; };
+          krops = pkgs.callPackage ./pkgs/krops { inherit populate populate-unwrapped; };
           populate = pkgs.callPackage ./pkgs/krops/populate.nix { inherit populate-unwrapped; };
           populate-unwrapped = pkgs.callPackage ./pkgs/populate {};
         in {

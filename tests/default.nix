@@ -70,7 +70,8 @@ let
 
   # Names of the scenarios of the smoke test, besides populate's.
   smokeNames = import (populateTests + "/smoke.nix") ++ [
-    "deploy-local-buildTarget0-etcFlake0-flakefile"
+    "deploy-local-buildTarget0-etcFlake0-flakefile-targetString0"
+    "deploy-remote-buildTarget0-etcFlake0-flakenone-targetString1"
     "deploy-sudo-allocateTTY"
   ];
 

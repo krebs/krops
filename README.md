@@ -102,8 +102,17 @@ taking nixpkgs' lib:
 }
 ```
 
-krops evaluates environment variables and `/etc/hostname`, which pure
-evaluation doesn't allow, so deploy with `nix run --impure .#deploy`.
+Deploy with `nix run .#deploy`.  A target string goes to populate as it
+is, which fills in what it leaves out, and decides whether the target is
+local, when it runs, and so does `populate shell`, which runs
+`nixos-rebuild`, and the commands of `writeCommand`, on targets.  A target
+attribute set gets `mkTarget`'s defaults, and whether it's local, during
+evaluation, unless that's pure, as flakes evaluate by default, which can't
+tell the user running krops, the machine's name, and whether a target is
+local.  Then `mkTarget` leaves the user and the host null, and populate
+decides when it runs.  It also refuses to copy flakes to targets using
+sudo then, which krops otherwise refuses during evaluation, and
+`writeDeploy` needs a target's host for a separate `buildTarget`.
 
 `pkgs.krops` provides the following functions.
 
@@ -252,6 +261,8 @@ activating it.
 
 This basically makes the sources available on the target machine
 below `/var/src`, and executes `NIX_PATH=/var/src nix-build -A system '<nixpkgs/nixos>'`.
+The target must be the machine krops runs on, which `writeTest` checks
+during evaluation, or, if that's pure, before populating.
 
 ### `target`
 

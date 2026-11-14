@@ -5,6 +5,10 @@
 
 let
   populate.lib = import ../pkgs/populate/lib { inherit lib; };
+
+  # Whether evaluation is pure, which hides the environment and files
+  # outside the store.
+  pure = !(builtins ? currentSystem);
 in
 
 rec {
@@ -30,19 +34,26 @@ rec {
   firstWord = s:
     lib.head (lib.match "^([^[:space:]]*).*" s);
 
+  # Whether target is the machine krops runs on, as the user running it.
+  # Pure evaluation can't tell, so krops leaves that to populate then.
   isLocalTarget = let
     origin = mkTarget "";
   in target:
     target.user == origin.user &&
     lib.elem target.host [origin.host "localhost"];
 
+  # A target as krops' functions take it: an attribute set, with the parts
+  # the string s, [USER@][HOST][:PORT][PATH], leaves out defaulting to
+  # LOGNAME, the machine's name, and /var/src.  Pure evaluation can't tell
+  # the first two, so they're null then, which populate fills in when it
+  # runs.  s can also be an attribute set, which the defaults fill up.
   mkTarget = s: let
     parse = lib.match "(([^@]*)@)?(([^:/]+))?(:([^/]+))?(/.*)?" s;
     elemAt' = xs: i: if lib.length xs > i then lib.elemAt xs i else null;
     filterNull = lib.filterAttrs (n: v: v != null);
   in {
     user = lib.maybeEnv "LOGNAME" null;
-    host = lib.maybeEnv "HOSTNAME" (maybeHostName "localhost");
+    host = if pure then null else lib.maybeEnv "HOSTNAME" (maybeHostName "localhost");
     port = null;
     path = "/var/src";
     sudo = false;
