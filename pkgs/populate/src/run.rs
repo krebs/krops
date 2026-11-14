@@ -111,8 +111,7 @@ pub struct Context {
 
 impl Context {
     /// Creates the temporary directory, and the ssh script in it.
-    pub fn new(target: Target, local: Option<bool>) -> Result<Context> {
-        let local = local.unwrap_or_else(|| is_local(&target));
+    pub fn new(target: Target, local: bool) -> Result<Context> {
         let output = Command::new("mktemp")
             .args(["-dt", "populate.XXXXXXXX"])
             .stderr(Stdio::inherit())
@@ -358,37 +357,50 @@ pub fn output(command: &mut Command) -> Result<String> {
     }
 }
 
-/// Whether the target is the machine populate runs on, as the user running
-/// it, like krops' lib's isLocalTarget decides during evaluation.
-fn is_local(target: &Target) -> bool {
-    let etc_hostname = fs::read_to_string("/etc/hostname").ok();
-    is_local_with(
-        target,
-        std::env::var("LOGNAME").ok().as_deref(),
-        std::env::var("HOSTNAME").ok().as_deref(),
-        etc_hostname.as_deref(),
-    )
+/// The user running populate, and the name of the machine it runs on, like
+/// krops' lib's mkTarget and isLocalTarget take them.
+#[derive(Clone, Debug)]
+pub struct Origin {
+    pub user: Option<String>,
+    pub host: String,
 }
 
-/// is_local, given LOGNAME, HOSTNAME, and the contents of /etc/hostname.
-/// Like lib.maybeEnv, an empty variable counts as unset.  The user running
-/// populate is LOGNAME, if set, and the machine's name is HOSTNAME, or else
-/// the only line of /etc/hostname that is a label, or else localhost.  The
-/// target is local if its user is that user, and its host is that name or
-/// localhost.
-fn is_local_with(
-    target: &Target,
-    logname: Option<&str>,
-    hostname: Option<&str>,
-    etc_hostname: Option<&str>,
-) -> bool {
-    let user = logname.filter(|v| !v.is_empty());
-    let host = hostname
-        .filter(|v| !v.is_empty())
-        .map(str::to_string)
-        .or_else(|| etc_hostname.and_then(host_name))
-        .unwrap_or_else(|| "localhost".to_string());
-    target.user.as_deref() == user && (target.host == "localhost" || target.host == host)
+impl Origin {
+    /// From LOGNAME, HOSTNAME, and /etc/hostname.
+    pub fn from_env() -> Origin {
+        let etc_hostname = fs::read_to_string("/etc/hostname").ok();
+        Origin::from(
+            std::env::var("LOGNAME").ok().as_deref(),
+            std::env::var("HOSTNAME").ok().as_deref(),
+            etc_hostname.as_deref(),
+        )
+    }
+
+    /// Given LOGNAME, HOSTNAME, and the contents of /etc/hostname.  Like
+    /// lib.maybeEnv, an empty variable counts as unset.  The user is
+    /// LOGNAME, if set, and the machine's name is HOSTNAME, or else the only
+    /// line of /etc/hostname that is a label, or else localhost.
+    pub fn from(
+        logname: Option<&str>,
+        hostname: Option<&str>,
+        etc_hostname: Option<&str>,
+    ) -> Origin {
+        Origin {
+            user: logname.filter(|v| !v.is_empty()).map(str::to_string),
+            host: hostname
+                .filter(|v| !v.is_empty())
+                .map(str::to_string)
+                .or_else(|| etc_hostname.and_then(host_name))
+                .unwrap_or_else(|| "localhost".to_string()),
+        }
+    }
+
+    /// Whether target is the machine populate runs on, as the user running
+    /// it: its user is that user, and its host is the machine's name or
+    /// localhost.
+    pub fn is_local(&self, target: &Target) -> bool {
+        target.user == self.user && (target.host == "localhost" || target.host == self.host)
+    }
 }
 
 /// The machine's name in the contents of /etc/hostname: its only line that
@@ -425,15 +437,20 @@ mod tests {
     }
 
     fn target(user: Option<&str>, host: &str) -> Target {
-        serde_json::from_value(serde_json::json!({
-            "user": user, "host": host, "path": "/var/src"
-        }))
-        .unwrap()
+        Target {
+            user: user.map(str::to_string),
+            host: host.to_string(),
+            port: None,
+            path: "/var/src".to_string(),
+            sudo: false,
+            extra_options: vec![],
+        }
     }
 
     #[test]
     fn local_targets() {
-        let local = |t: &Target, logname, hostname, etc| is_local_with(t, logname, hostname, etc);
+        let local =
+            |t: &Target, logname, hostname, etc| Origin::from(logname, hostname, etc).is_local(t);
         // An empty LOGNAME counts as unset, i.e. the user null.
         assert!(local(&target(None, "localhost"), Some(""), None, None));
         assert!(!local(&target(None, "localhost"), Some("tv"), None, None));

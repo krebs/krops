@@ -1,6 +1,6 @@
 # Populate, which delivers sources to a target directory.  Given populate's
 # arguments, it checks them, and returns a script running the program in
-# this directory with them as JSON.  rustProgram is that program, e.g. one
+# this directory with them, the sources as JSON.  rustProgram is that program, e.g. one
 # built with cargo during development.
 { coreutils, findutils, git, nix, openssh, pass, passage, rsync, writers
 , rustPlatform ? null
@@ -21,40 +21,57 @@ let
     "writers" "rustPlatform" "rustProgram"
   ] ++ unused));
 
+  # The parts of a target string, like mkTarget parses it, without its
+  # defaults, which populate fills in when it runs.
+  parseTarget = s: let
+    parts = match "(([^@]*)@)?(([^:/]+))?(:([^/]+))?(/.*)?" s;
+  in
+    if parts == null then throw "krops: invalid target ${toJSON s}"
+    else { host = elemAt parts 3; path = elemAt parts 6; };
+
   populate =
     { backup ? false, force ? false, prune ? false, source, target }:
-    assert checks.checkTargetPath target.path;
+    let
+      # A target string goes to populate as it is, so populate decides what
+      # it leaves out when it runs.  An attribute set, as mkTarget returns
+      # it, goes part by part, with whether it's local decided now, like the
+      # other functions of krops do.
+      parsed = parseTarget target;
+      path = if isString target then (if parsed.path != null then parsed.path else "/var/src") else target.path;
+      host = if isString target then (if parsed.host != null then parsed.host else "localhost") else target.host;
+      targetArgs =
+        if isString target then [ target ]
+        else [
+          "--user" (if target.user or null == null then "" else target.user)
+          "--host" target.host
+          "--path" target.path
+        ] ++ optionals (target.port or null != null) [
+          "--port" (toString target.port)
+        ] ++ optional (target.sudo or false) "--sudo"
+          ++ concatMap (arg: [ "--ssh-arg" arg ]) (flatten (target.extraOptions or []))
+          ++ [ (if isLocalTarget target then "--local" else "--remote") ];
+    in
+    assert checks.checkTargetPath path;
     assert all checks.checkSourceName (attrNames source);
     assert checks.checkInputs source;
-    assert checks.checkCopyingWithSudo target source;
-    let
-      # Store paths in the arguments stay dependencies of the script, so
-      # building it builds them.
-      spec = toJSON {
-        version = 1;
-        inherit backup force prune source;
-        target = {
-          inherit (target) host path;
-          user = target.user or null;
-          port = if target.port or null == null then null else toString target.port;
-          sudo = target.sudo or false;
-          extraOptions = target.extraOptions or [];
-          # Decided during evaluation, like the other functions of krops do.
-          local = isLocalTarget target;
-        };
-      };
-    in
-    writers.writeDash "populate.${target.host}" /* sh */ ''
+    assert isString target || checks.checkCopyingWithSudo target source;
+    writers.writeDash "populate.${host}" /* sh */ ''
       set -efu
       echo + "$0" >&2
       PATH=${makeBinPath [
         coreutils findutils git nix openssh pass passage rsync
       ]}''${PATH:+:$PATH}
       export PATH
-      # On a file descriptor of its own, so the commands populate runs keep
-      # standard input.  The JSON is a single line, which can't be the delimiter.
-      exec ${rustProgram}/bin/populate /dev/fd/3 3<<'EOF'
-      ${spec}
+      # The sources on a file descriptor of their own, so the commands
+      # populate runs keep standard input.  Store paths in them stay
+      # dependencies of this script, so building it builds them.  The JSON is
+      # a single line, which can't be the delimiter.
+      exec ${rustProgram}/bin/populate ${escapeShellArgs (
+        optional backup "--backup" ++
+        optional force "--force" ++
+        optional prune "--prune"
+      )} /dev/fd/3 ${escapeShellArgs targetArgs} 3<<'EOF'
+      ${toJSON source}
       EOF
     '';
 

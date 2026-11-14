@@ -1,19 +1,40 @@
-//! Checks of the spec, the same as checks.nix makes during evaluation, so a
-//! spec from anywhere else gets checked as well.  Messages are the same.
+//! Checks of the sources and the target, the same as checks.nix makes during
+//! evaluation, so sources from anywhere else get checked as well.  Messages
+//! are the same.
 
 use crate::spec::{Source, Spec};
 use serde_json::{Map, Value};
 use std::collections::BTreeMap;
 
-/// The spec's checks in the order checks.nix makes them, the first failing
-/// one's message.
+/// The checks in the order checks.nix makes them, the first failing one's
+/// message.  The target's host and user, which a command line gives, come
+/// first.
 pub fn spec(spec: &Spec) -> Result<(), String> {
+    target_host(&spec.target.host, spec.target.user.as_deref())?;
     target_path(&spec.target.path)?;
     for (name, source) in &spec.source {
         source_name(name)?;
         settings(name, source)?;
     }
     inputs(&spec.source)
+}
+
+/// The target's host and user, which ssh gets as arguments, mustn't be
+/// taken for its options, and the host can't be empty.
+fn target_host(host: &str, user: Option<&str>) -> Result<(), String> {
+    if host.is_empty() || host.starts_with('-') {
+        return Err(format!(
+            "krops: target host {} can't be used: it must not be empty or start with -",
+            quote(host)
+        ));
+    }
+    if user.is_some_and(|u| u.starts_with('-')) {
+        return Err(format!(
+            "krops: target user {} can't be used: it must not start with -",
+            quote(user.unwrap_or_default())
+        ));
+    }
+    Ok(())
 }
 
 /// What a setting holds.
@@ -365,14 +386,37 @@ mod tests {
     }
 
     #[test]
+    fn target_hosts() {
+        assert!(target_host("host", Some("root")).is_ok());
+        assert!(target_host("2001:db8::1", None).is_ok());
+        assert_eq!(
+            target_host("-oProxyCommand=x", None).unwrap_err(),
+            r#"krops: target host "-oProxyCommand=x" can't be used: it must not be empty or start with -"#
+        );
+        assert!(target_host("", None).is_err());
+        assert!(target_host("host", Some("-x")).is_err());
+    }
+
+    #[test]
     fn settings() {
         let spec = |file: &str| -> Spec {
-            serde_json::from_str(&format!(
-                r#"{{"version": 1, "target": {{"host": "h", "path": "/a"}},
-                    "source": {{"x": {{"type": "file", "file": {}}}}}}}"#,
-                file
-            ))
-            .unwrap()
+            Spec {
+                backup: false,
+                force: false,
+                prune: false,
+                source: serde_json::from_str(&format!(
+                    r#"{{"x": {{"type": "file", "file": {file}}}}}"#
+                ))
+                .unwrap(),
+                target: crate::spec::Target {
+                    user: None,
+                    host: "h".to_string(),
+                    port: None,
+                    path: "/a".to_string(),
+                    sudo: false,
+                    extra_options: vec![],
+                },
+            }
         };
         assert!(super::spec(&spec(r#"{"path": "/src"}"#)).is_ok());
         assert!(super::spec(&spec(r#"{"path": "--rsync-path=x"}"#)).is_err());

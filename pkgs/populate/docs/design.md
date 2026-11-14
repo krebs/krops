@@ -2,27 +2,33 @@
 
 Populate delivers sources to a target directory.  It consists of two parts:
 
-- Nix code, which turns populate's arguments into a spec: the sources as
-  `evalSource` returns them, the target, and the options, as JSON.  It
-  checks the spec during evaluation, so mistakes show early.
-- A program, which reads a spec and delivers the sources.  It knows
-  nothing about Nix expressions: whatever produces a spec can drive it.
+- Nix code, which turns populate's arguments into a command line: the
+  sources as `evalSource` returns them, as JSON, the target, and the
+  options.  It checks the arguments during evaluation, so mistakes show
+  early.
+- A program, which reads the sources and delivers them to the target its
+  command line names.  It knows nothing about Nix expressions: whatever
+  produces sources as JSON can drive it.
 
 So there is one program for each version of populate, instead of a script
 for each set of arguments, and the program can be written in any language.
 This directory holds the program in Rust.  Another implementation, e.g. in
-Haskell, reads the same spec, prints the same messages, and passes the same
-tests.
+Haskell, takes the same command line, prints the same messages, and passes
+the same tests.
 
 ## Nix side
 
 `default.nix` is `pkgs.populate`.  Given populate's arguments, `{ backup ?
 false, force ? false, prune ? false, source, target }`, it checks them with
-`checks.nix`, turns them into a spec, and returns a script running the
-program with the spec on file descriptor 3, so the commands populate runs
-keep standard input.  The script puts the tools populate runs in front of
-`PATH`, and depends on the store paths in the spec, so building it builds
-them.  `rustProgram` is the program, by default built by `program.nix`.
+`checks.nix`, and returns a script running the program with the sources as
+JSON on file descriptor 3, so the commands populate runs keep standard
+input.  A target string goes to the program as it is.  A target attribute
+set, as `mkTarget` returns it, goes part by part, as options, with
+`--local` or `--remote` as krops' lib's `isLocalTarget` decides during
+evaluation, like the other functions of krops.  The script puts the tools
+populate runs in front of `PATH`, and depends on the store paths in the
+sources, so building it builds them.  `rustProgram` is the program, by
+default built by `program.nix`.
 
 `writeDeploy` and the other functions of `pkgs.krops` use `pkgs.populate`,
 so their arguments stay as they are.
@@ -30,73 +36,80 @@ so their arguments stay as they are.
 ## Invocation
 
 ```
-populate SPEC
+populate [OPTION]... SOURCES [TARGET]
 ```
 
-`SPEC` is the path of a file containing the spec, or `-` for standard
-input.  Exit status:
+`SOURCES` is the path of a file containing the sources, or `-` for
+standard input.  `TARGET` is `[USER@][HOST][:PORT][PATH]`, parsed like
+krops' lib's `mkTarget` parses it: the user up to the first `@`, the host
+up to a `:` or a `/`, the port up to a `/`, and the path from there.  What
+it leaves out gets filled in when the program runs, as `mkTarget` would:
+the user from `LOGNAME`, the host with the machine's name, and the path
+with `/var/src`.  An empty user means ssh's default.
+
+| Option          | Meaning                                                 |
+|-----------------|---------------------------------------------------------|
+| `--backup`      | Copy the target directory to a backup first.            |
+| `--force`       | Create the target directory's sentinel if it's missing. |
+| `--prune`       | Remove what isn't a source from the target directory.   |
+| `--sudo`        | Deliver as root, via sudo on the target.                |
+| `--ssh-arg ARG` | Pass `ARG` to ssh; repeatable.                          |
+| `--user USER`   | The target's user, instead of `TARGET`'s.               |
+| `--host HOST`   | The target's host, e.g. one `TARGET` can't express.     |
+| `--port PORT`   | The port ssh connects to.                               |
+| `--path PATH`   | The target directory.                                   |
+| `--local`       | The target is the machine populate runs on.             |
+| `--remote`      | The target isn't, even if it looks so.                  |
+| `-h`, `--help`  | Print the usage and exit.                               |
+| `-V`, `--version` | Print populate's version and exit.                    |
+
+Options take their argument as the next argument or after `=`, and may
+come before, between, or after `SOURCES` and `TARGET`, up to `--`.  Exit
+status:
 
 - 0: populate delivered all sources.
-- 1: a check of the spec failed, or delivering did, with a message of its
-  own.
+- 1: a check of the sources or the target failed, or delivering did, with
+  a message of its own.
 - The exit status of the command that failed, if delivering failed with
   that, like the shell implementation does: e.g. 255 if ssh can't reach
   the target, or 128 if git fetch fails.
-- 2: the arguments are wrong, or the spec can't be read, isn't JSON, is of
-  another version, or doesn't have the spec's shape.
+- 2: the command line is wrong, or the sources can't be read, aren't JSON,
+  or aren't sources.
 - 129, 130, 143: populate got SIGHUP, SIGINT, or SIGTERM, and stopped.
 
-## Spec, version 1
+## Sources
 
-The spec is a JSON object:
-
-| Field     | Type                 | Default | Meaning                                       |
-|-----------|----------------------|---------|-----------------------------------------------|
-| `version` | number               |         | The version of the spec: 1.                   |
-| `backup`  | boolean              | false   | Copy the sources to backup first.             |
-| `force`   | boolean              | false   | Create the sentinel if it's missing.          |
-| `prune`   | boolean              | false   | Remove what isn't a source.                   |
-| `source`  | object of sources    |         | The sources, by name.                         |
-| `target`  | object               |         | Where to deliver them.                        |
-
-`target` has these fields:
-
-| Field          | Type             | Default | Meaning                                  |
-|----------------|------------------|---------|------------------------------------------|
-| `user`         | string or null   | null    | The user to log in as.                   |
-| `host`         | string           |         | The host to deliver to.                  |
-| `port`         | string or null   | null    | The port ssh connects to.                |
-| `path`         | string           |         | The target directory.                    |
-| `sudo`         | boolean          | false   | Deliver as root, via sudo.               |
-| `extraOptions` | array of strings | []      | More arguments for ssh.                  |
-| `local`        | boolean or null  | null    | Whether the target is local.             |
-
-Each source is an object with the field `type`, the source's type, and a
-field named after the type, holding the source's settings:
+The sources are a JSON object, of sources by name.  Each source is an
+object with the field `type`, the source's type, and a field named after
+the type, holding the source's settings:
 
 ```json
-{ "type": "git", "git": { "url": "https://...", "ref": "main", ... } }
+{ "nixpkgs": { "type": "git", "git": { "url": "https://...", "ref": "main" } } }
 ```
 
 The types and their settings are those of `lib/types/populate.nix`, as
 `evalSource` returns them: with shorthands expanded, e.g. `file =
 "/etc/x"` as `{ "path": "/etc/x" }`, and without settings that are null.
-The source types are `derivation`, `file`, `flake`, `flake-input`, `git`,
-`pass`, `passage`, `pipe`, and `symlink`.
+Settings with defaults may be left out.  The source types are
+`derivation`, `file`, `flake`, `flake-input`, `git`, `pass`, `passage`,
+`pipe`, and `symlink`.
 
-Fields the spec doesn't define are errors, so a misspelt option doesn't go
-unnoticed, and a spec of another version gets refused before anything
-else.  A new version of the spec adds fields or changes their meaning; the
-program reads the versions it knows.
+Fields and settings populate doesn't know are errors, so a misspelt option
+doesn't go unnoticed.  The sources carry no version: this is version 0, and
+a later version of populate that reads them differently will mark them.
 
-Store paths in the spec, e.g. of a `file` source that is a derivation, must
-exist when the program runs.  The script `default.nix` writes depends on them.
-Something producing a spec at run time has to build them first.
+Store paths in the sources, e.g. of a `file` source that is a derivation,
+must exist when the program runs.  The script `default.nix` writes depends
+on them.  Something producing sources at run time has to build them first.
 
 ## Checks
 
-The program checks the spec as `checks.nix` does, with the same messages:
+The program checks the sources and the target as `checks.nix` does, with
+the same messages:
 
+- The target's host isn't empty, and neither it nor its user starts with
+  `-`, so ssh can't take them for options.  `checks.nix` doesn't check
+  this, since krops' targets come from the configuration.
 - Source names are portable file names: letters, digits, and `._-`, not
   starting with `-`, and neither `.`, `..`, nor `.populate`.
 - The target path is absolute, not the root directory, and contains
@@ -134,7 +147,7 @@ units of 1024.
 ## Safety
 
 Populate never changes or removes anything outside the target directory,
-whatever the spec and whatever it finds on the target:
+whatever the sources and whatever it finds on the target:
 
 - The checks above keep source names and the target path inside it.
 - A symlink at the target path of a source gets replaced, never written
@@ -152,13 +165,12 @@ places populate must not touch, check this after every phase.
 
 ## Execution
 
-Whether a target is local is what the target's `local` says, or, if
-that's null, gets decided when the program runs, like krops' lib's
-`isLocalTarget` does: it is, if its user is `LOGNAME`, or null if that's
-empty or unset, and its host is `localhost` or the host's name, from
-`HOSTNAME`, or, if that's empty or unset, the only line of `/etc/hostname`
-that is a label.  `default.nix` decides during evaluation, like the other
-functions of krops.  For a local target, populate runs commands directly.
+Whether a target is local is what `--local` or `--remote` says, or else
+gets decided when the program runs, like krops' lib's `isLocalTarget`
+does: it is, if its user is `LOGNAME`, or null if that's empty or unset,
+and its host is `localhost` or the machine's name, from `HOSTNAME`, or, if
+that's empty or unset, the only line of `/etc/hostname` that is a label.
+For a local target, populate runs commands directly.
 
 For a remote target, populate runs commands over ssh, sharing one master
 connection per target.  The commands are fixed POSIX shell snippets, with
