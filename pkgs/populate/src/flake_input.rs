@@ -509,9 +509,17 @@ fn nix_config() -> String {
     format!("{config}\nextra-experimental-features = nix-command flakes")
 }
 
-/// Copies store paths to the target with nix copy, which runs ssh from
-/// PATH, so that's the ssh for Nix's ssh:// store there.
+/// Copies the store paths the target lacks to the target with nix copy,
+/// which runs ssh from PATH, so that's the ssh for Nix's ssh:// store
+/// there.  It connects anew, which the shared connection spares if the
+/// target has all of them.
 fn copy(context: &Context, workdir: &Path, paths: &[String]) -> Result<()> {
+    let args: Vec<&str> = paths.iter().map(String::as_str).collect();
+    let invalid = context.output("nix-store --check-validity --print-invalid \"$@\"\n", &args)?;
+    let missing: Vec<&str> = invalid.lines().filter(|line| !line.is_empty()).collect();
+    if missing.is_empty() {
+        return Ok(());
+    }
     let bin = workdir.join("bin");
     let link = bin.join("ssh");
     let prepare = || -> std::io::Result<()> {
@@ -528,7 +536,10 @@ fn copy(context: &Context, workdir: &Path, paths: &[String]) -> Result<()> {
         std::env::join_paths(std::iter::once(bin.clone()).chain(std::env::split_paths(&path)))
             .map_err(|e| Failure::Message(format!("error: can't extend PATH: {e}")))?;
     let mut command = nix(&["copy", "--to", &format!("ssh://{}", context.target.host)]);
-    command.args(paths).env("PATH", path).stdout(run::stderr());
+    command
+        .args(missing)
+        .env("PATH", path)
+        .stdout(run::stderr());
     run::status(&mut command)
 }
 

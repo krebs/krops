@@ -253,8 +253,8 @@ The flake source type delivers a flake to the target.  The flake gets
 archived locally using `nix flake archive`, which includes only files tracked
 by Git, so use a `file` source for work trees with untracked files.  The
 flake and its inputs get copied into the target's Nix store using `nix copy`,
-and the target path becomes a symlink to the flake's store path, registered
-as garbage collector root.  For flakes in a subdirectory, e.g.
+if it lacks any of them, and the target path becomes a symlink to the
+flake's store path, registered as garbage collector root.  For flakes in a subdirectory, e.g.
 `git+file:/src/mono?dir=sub`, the symlink points at that subdirectory of the
 store path.  The inputs get garbage collector roots in
 `.populate/flake-inputs/<name>`, which turns the sentinel file into a
