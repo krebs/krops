@@ -1,7 +1,8 @@
-# Runs scenarios in a NixOS VM test with two machines: deployer, which runs
-# populate, and target, which it deploys to via ssh.  Local scenarios deploy
-# to deployer itself.
-{ pkgs, name, scenarios, gitHead, rsync ? pkgs.rsync }:
+# Runs scenarios in a NixOS VM test named name, with two machines: deployer,
+# which runs populate, and target, which it delivers to via ssh.  Local
+# scenarios deliver to deployer itself.  module is more configuration for
+# both, e.g. stand-ins for programs the scenarios run.
+{ pkgs, name, scenarios, gitHead, rsync ? pkgs.rsync, module ? {} }:
 
 let
   inherit (pkgs) lib;
@@ -11,7 +12,7 @@ let
   script = name: text: if text == null then null else pkgs.writeText name text;
 
   # The scenarios as JSON, with scripts as files.
-  plan = pkgs.writeText "krops-test-${name}.json" (builtins.toJSON (map
+  plan = pkgs.writeText "${name}.json" (builtins.toJSON (map
     (scenario: scenario // {
       prepare = pkgs.writeText "prepare" scenario.prepare;
       canarySetup = pkgs.writeText "canary-setup" scenario.canarySetup;
@@ -29,6 +30,7 @@ let
     scenarios));
 
   common = { pkgs, ... }: {
+    imports = [ module ];
     # The plan refers to all scripts the scenarios run.  Being part of the
     # system, they survive the scenarios collecting garbage.
     system.extraDependencies = [ plan "${./fixtures.sh}" ];
@@ -36,10 +38,7 @@ let
     environment.systemPackages = [
       pkgs.git
       rsync
-      (pkgs.writeScriptBin "nixos-rebuild" (builtins.readFile ./nixos-rebuild.sh))
     ];
-    # The stand-in replaces nixos-rebuild.
-    system.disableInstallerTools = true;
     # Only warnings and errors on the console, which ends up in the log.
     services.journald.extraConfig = lib.mkAfter "MaxLevelConsole=warning";
     boot.initrd.systemd.contents."/etc/systemd/journald.conf".text =
@@ -56,7 +55,7 @@ let
   };
 
 in pkgs.testers.runNixOSTest {
-  name = "krops-${name}";
+  inherit name;
 
   globalTimeout = 4 * 60 * 60;
 
