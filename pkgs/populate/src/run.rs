@@ -10,6 +10,10 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::sync::atomic::{AtomicI32, Ordering};
 
+/// The shell running shell code, on the deploying machine and on the
+/// target, by its path, so neither needs a shell in PATH.
+pub const SH: &str = "/bin/sh";
+
 /// Why populate stops before delivering everything.
 #[derive(Debug)]
 pub enum Failure {
@@ -158,7 +162,7 @@ impl Context {
     /// now, so the script can be ssh in PATH itself, as for nix copy.
     fn write_ssh(&self, path: &Path, options: &[String]) -> Result<()> {
         let ssh = which("ssh").unwrap_or_else(|| PathBuf::from("ssh"));
-        let mut script = format!("#!/bin/sh\nexec {}", quote(&ssh.to_string_lossy()));
+        let mut script = format!("#!{SH}\nexec {}", quote(&ssh.to_string_lossy()));
         for word in options {
             script.push(' ');
             script.push_str(&quote(word));
@@ -257,17 +261,16 @@ impl Context {
             .collect();
         let args = args.as_slice();
         if self.local {
-            let mut command = Command::new("sh");
+            let mut command = Command::new(SH);
             command.arg("-c").arg(script).arg("sh").args(args);
             Ok(command)
         } else {
             let mut words = vec![
                 if self.target.sudo {
-                    "sudo sh -c"
+                    format!("sudo {SH} -c")
                 } else {
-                    "sh -c"
-                }
-                .to_string(),
+                    format!("{SH} -c")
+                },
                 quote(&script),
                 "sh".to_string(),
             ];
@@ -438,7 +441,7 @@ impl Context {
 /// A command running shell code on the deploying machine, in dir, with
 /// args as its positional parameters.
 pub fn local_shell(script: &str, args: &[&str], dir: &Path) -> Command {
-    let mut command = Command::new("sh");
+    let mut command = Command::new(SH);
     command
         .arg("-c")
         .arg(format!("set -efu\n{script}"))

@@ -106,7 +106,7 @@ remove_others() {
     shift
     n=$((n - 1))
   done
-  find "$dir" -mindepth 1 -maxdepth 1 "$@" -exec sh -c '
+  find "$dir" -mindepth 1 -maxdepth 1 "$@" -exec /bin/sh -c '
     log=$1
     shift
     for path; do
@@ -281,7 +281,7 @@ pub fn break_hard_links() -> String {
         + r#"
 remove_link "$1" "$2"
 if test -d "$1"; then
-  find "$1" -type f -links +1 -exec sh -c '
+  find "$1" -type f -links +1 -exec /bin/sh -c '
     for file; do
       copy=$(mktemp "$file.XXXXXX")
       cp -p "$file" "$copy"
@@ -346,7 +346,7 @@ git_problems() (
     exit
   fi
   nested=$(
-    find "$path" -path "$git_dir" -prune -o -name .git -exec sh -c '
+    find "$path" -path "$git_dir" -prune -o -name .git -exec /bin/sh -c '
       modules=$1
       shift
       for git; do

@@ -26,8 +26,9 @@ fetches the program's dependencies from [crates.io](https://crates.io).
 ## Requirements
 
 populate runs rsync, ssh, Git, Nix, pass, and passage as the sources need
-them, found in `PATH`, as well as a POSIX shell, coreutils, and findutils.
-The target needs a POSIX shell, coreutils, findutils, `flock`, rsync,
+them, found in `PATH`, as well as coreutils and findutils, and a POSIX shell
+as `/bin/sh`.
+The target needs a POSIX shell as `/bin/sh`, coreutils, findutils, `flock`, rsync,
 `patch` for sources with `patches`, Git for `git` sources, and Nix, and, if
 remote, ssh access as root, or, with `--sudo`, as a user who may use
 `sudo`.
