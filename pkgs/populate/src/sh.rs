@@ -125,12 +125,44 @@ remove_others() {
 }
 "#;
 
-/// check SENTINEL NAME DIR FORCE: fails unless the sentinel exists, creating
-/// it and the target directory DIR first if FORCE isn't empty.  A sentinel
-/// file becomes a directory, which populate keeps its state in.  NAME is
-/// the sentinel's name in messages.
+/// check SENTINEL NAME DIR FORCE [COMMAND ATTR]...: fails unless the
+/// sentinel exists, creating it and the target directory DIR first if FORCE
+/// isn't empty.  A sentinel file becomes a directory, which populate keeps
+/// its state in.  NAME is the sentinel's name in messages.  If any COMMAND
+/// isn't there, it warns, gets the packages with the attribute names ATTR
+/// of those from <nixpkgs> with nix-build, and prints path and where their
+/// commands are, like PATH.
 pub const CHECK: &str = r#"
 sentinel=$1 name=$2 dir=$3 force=$4
+shift 4
+# The commands that aren't there, of those that follow, each followed by
+# the attribute name of its package in nixpkgs, which nix-build gets, once,
+# for all of them.
+missing= attrs=
+while test $# -gt 0; do
+  if ! command -v "$1" >/dev/null; then
+    missing=$missing${missing:+, }$1
+    attrs="$attrs \"$2\""
+  fi
+  shift 2
+done
+if test -n "$missing"; then
+  >&2 printf 'warning: the target lacks %s, which populate gets from <nixpkgs> for this run\n' \
+      "$missing"
+  if ! out=$(nix-build --no-out-link --arg attrs "[$attrs ]" -E '
+    { attrs }: let pkgs = import <nixpkgs> {}; in
+    map (attr: pkgs.lib.getBin pkgs.${attr}) attrs
+  '); then
+    >&2 printf 'error: the target lacks %s, and nix-build cannot get it from <nixpkgs>\n' \
+        "$missing"
+    exit 1
+  fi
+  path=
+  for out in $out; do
+    path=$path${path:+:}$out/bin
+  done
+  printf 'path %s\n' "$path"
+fi
 # Before anything touches it, which would touch what it points to.
 if test -L "$sentinel"; then
   >&2 printf 'error: sentinel file is a symlink: %s\n' "$name"

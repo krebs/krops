@@ -12,7 +12,31 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-/// Checks the sentinel, takes the lock on the target directory, makes a
+/// The commands populate runs on the target to deliver spec's sources, each
+/// followed by the attribute name in nixpkgs of the package that has it.
+fn tools(spec: &Spec) -> Vec<&'static str> {
+    let sources = || spec.source.values();
+    let mut tools = vec!["find", "findutils", "flock", "util-linux"];
+    if sources().any(|s| !matches!(s.kind.as_str(), "derivation" | "git" | "symlink")) {
+        tools.extend(["rsync", "rsync"]);
+    }
+    if sources().any(|s| s.kind == "git") {
+        tools.extend(["git", "git"]);
+    }
+    let patched = |s: &&Source| {
+        s.settings
+            .get("patches")
+            .and_then(Value::as_array)
+            .is_some_and(|patches| !patches.is_empty())
+    };
+    if sources().any(|s| patched(&s)) {
+        tools.extend(["patch", "gnupatch"]);
+    }
+    tools
+}
+
+/// Checks the sentinel, gets what the target lacks of the commands
+/// populate runs there from nixpkgs, takes the lock on the target directory, makes a
 /// backup if asked, delivers each source, prunes if asked, and writes the
 /// record of the run, see the record module.
 pub fn populate(context: &Context, spec: &Spec) -> Result<()> {
@@ -20,10 +44,13 @@ pub fn populate(context: &Context, spec: &Spec) -> Result<()> {
     refuse_copying_with_sudo(context, spec)?;
     let sentinel = format!("{dir}/.populate");
     let force = if spec.force { "1" } else { "" };
-    context.run(
-        sh::CHECK,
-        &[&sentinel, &context.name(&sentinel), dir, force],
-    )?;
+    let name = context.name(&sentinel);
+    let mut args = vec![sentinel.as_str(), &name, dir, force];
+    args.extend(tools(spec));
+    let output = context.output(sh::CHECK, &args)?;
+    if let Some(path) = output.lines().find_map(|line| line.strip_prefix("path ")) {
+        context.add_path(path);
+    }
     let started = record::now();
     let (previous, last) = context.lock(&sentinel, json!({ "run": started }))?;
     if spec.backup {
