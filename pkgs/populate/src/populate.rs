@@ -25,7 +25,7 @@ pub fn populate(context: &Context, spec: &Spec) -> Result<()> {
         &[&sentinel, &context.name(&sentinel), dir, force],
     )?;
     let started = record::now();
-    let previous = context.lock(&sentinel, json!({ "run": started }))?;
+    let (previous, last) = context.lock(&sentinel, json!({ "run": started }))?;
     if spec.backup {
         context.run(&sh::backup(), &[dir])?;
     }
@@ -71,10 +71,52 @@ pub fn populate(context: &Context, spec: &Spec) -> Result<()> {
             context.note(json!({ "pruned": true }));
         }
     }
-    let record = record::record(spec, &started, &previous, &context.entries());
+    let mut record = record::record(spec, &started, &previous, &context.entries());
+    digests(context, spec, &mut record, &last.join("\n"))?;
     context.run(sh::RECORD, &[&sentinel, &record.to_string()])?;
     context.unlock();
     Ok(())
+}
+
+/// Adds the digest of each file source whose record setting asks for it to
+/// the record: of what's at its target path now, after the flakes step,
+/// only if it changed since the last record, last, and else the one the
+/// last record has, so a run that changes nothing reads nothing more.
+fn digests(context: &Context, spec: &Spec, record: &mut Value, last: &str) -> Result<()> {
+    let last: Value = serde_json::from_str(last).unwrap_or(Value::Null);
+    let mut names = Vec::new();
+    let mut paths = Vec::new();
+    for (name, source) in &spec.source {
+        if !record_setting(source, "digest") {
+            continue;
+        }
+        let entry = &mut record["sources"][name];
+        let digest = &last["sources"][name]["digest"];
+        if entry["changed"] == json!(false) && digest.is_string() {
+            entry["digest"] = digest.clone();
+        } else {
+            names.push(name);
+            paths.push(format!("{}/{name}", spec.target.path));
+        }
+    }
+    if !paths.is_empty() {
+        let args: Vec<&str> = paths.iter().map(String::as_str).collect();
+        let output = context.output(sh::DIGESTS, &args)?;
+        for (name, digest) in names.iter().zip(output.lines()) {
+            record["sources"][name.as_str()]["digest"] = json!(digest);
+        }
+    }
+    Ok(())
+}
+
+/// Whether a source's record setting has key set.
+fn record_setting(source: &Source, key: &str) -> bool {
+    source
+        .settings
+        .get("record")
+        .and_then(|r| r.get(key))
+        .and_then(Value::as_bool)
+        == Some(true)
 }
 
 /// What delivering a source did: whether that changed anything in the
@@ -94,8 +136,8 @@ impl Outcome {
     }
 
     /// With what got delivered, under key, as value.
-    pub fn with(mut self, key: &str, value: &str) -> Outcome {
-        self.delivered.insert(key.to_string(), json!(value));
+    pub fn with(mut self, key: &str, value: impl Into<Value>) -> Outcome {
+        self.delivered.insert(key.to_string(), value.into());
         self
     }
 
@@ -230,9 +272,43 @@ impl Kind for File {
         // The lock file the flakes step rewrites, which delivering brings
         // back, changed if the flakes step says so.
         let lock = in_place_lock(d.source);
-        Ok(Outcome::changed(
-            changed.iter().any(|path| Some(path.as_str()) != lock),
-        ))
+        let outcome = Outcome::changed(changed.iter().any(|path| Some(path.as_str()) != lock));
+        if !record_setting(d.source, "commit") {
+            return Ok(outcome);
+        }
+        // What the work tree's Git says, without its hooks and file system
+        // monitors, and without writing the index.
+        let git = |args: &[&str]| {
+            Command::new("git")
+                .args([
+                    "-c",
+                    "core.hooksPath=/dev/null",
+                    "-c",
+                    "core.fsmonitor=false",
+                ])
+                .args(["--no-optional-locks", "-C", source_path])
+                .args(args)
+                .stdin(Stdio::null())
+                .stderr(Stdio::null())
+                .output()
+                .ok()
+                .filter(|output| output.status.success())
+                .map(|output| {
+                    String::from_utf8_lossy(&output.stdout)
+                        .trim_end()
+                        .to_string()
+                })
+        };
+        // Nothing, if the path isn't in a Git work tree.
+        let Some(commit) = git(&["rev-parse", "--verify", "--quiet", "HEAD"]) else {
+            return Ok(outcome);
+        };
+        let status = git(&["status", "--porcelain", "--", "."]).ok_or_else(|| {
+            Failure::Message(format!("error: can't tell the Git status of {source_path}"))
+        })?;
+        Ok(outcome
+            .with("commit", commit)
+            .with("dirty", !status.is_empty()))
     }
 }
 

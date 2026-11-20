@@ -281,8 +281,12 @@ impl Context {
     /// Takes the lock on the target directory, whose sentinel is sentinel,
     /// adding entry to the journal, which entries go to from now on, until
     /// unlock.  Returns the lines that runs that didn't finish left in the
-    /// journal.
-    pub fn lock(&self, sentinel: &str, entry: serde_json::Value) -> Result<Vec<String>> {
+    /// journal, and the lines of the last run's record.
+    pub fn lock(
+        &self,
+        sentinel: &str,
+        entry: serde_json::Value,
+    ) -> Result<(Vec<String>, Vec<String>)> {
         let mut command = self.shell(
             crate::sh::LOCK,
             &[sentinel, &self.name(sentinel), &entry.to_string()],
@@ -293,7 +297,8 @@ impl Context {
             .stderr(Stdio::inherit());
         let mut child = command.spawn().map_err(|e| spawn_error(&command, e))?;
         let stdout = child.stdout.take().expect("piped");
-        let mut previous = Vec::new();
+        let mut journal = Vec::new();
+        let mut record = None;
         let mut locked = false;
         for line in BufReader::new(stdout).lines() {
             let line = line.map_err(|e| {
@@ -305,7 +310,11 @@ impl Context {
                 locked = true;
                 break;
             }
-            previous.push(line);
+            match &mut record {
+                None if line == "record" => record = Some(Vec::new()),
+                None => journal.push(line),
+                Some(record) => record.push(line),
+            }
         }
         if !locked {
             drop(child.stdin.take());
@@ -322,7 +331,7 @@ impl Context {
         *self.journal.borrow_mut() = Some(format!("{sentinel}/journal"));
         self.entries.borrow_mut().0.push(entry);
         self.entries.borrow_mut().1 = 1;
-        Ok(previous)
+        Ok((journal, record.unwrap_or_default()))
     }
 
     /// Fails if the command holding the lock ended, e.g. killed on the

@@ -154,11 +154,13 @@ fi
 
 /// lock SENTINEL NAME ENTRY: waits for an exclusive lock on SENTINEL/lock,
 /// prints what's in SENTINEL/journal, which is there if a run didn't
-/// finish, appends ENTRY to it, and prints locked.  Then it keeps the lock
-/// until its standard input ends, which consumers of the target directory
-/// can wait for by taking a shared lock.  NAME is the sentinel's name in
-/// messages.  Writing to a symlink in place of the lock or the journal
-/// would write to what it points to, so it refuses those.
+/// finish, appends ENTRY to it, prints record and what's in
+/// SENTINEL/run.json, the last run's record, if any, and prints locked.
+/// Then it keeps the lock until its standard input ends, which consumers
+/// of the target directory can wait for by taking a shared lock.  NAME is
+/// the sentinel's name in messages.  Writing to a symlink in place of the
+/// lock or the journal would write to what it points to, so it refuses
+/// those.
 pub const LOCK: &str = r#"
 sentinel=$1 name=$2 entry=$3
 for file in lock journal; do
@@ -177,6 +179,10 @@ if test -f "$sentinel"/journal; then
   cat "$sentinel"/journal
 fi
 printf '%s\n' "$entry" >> "$sentinel"/journal
+echo record
+if test -f "$sentinel"/run.json; then
+  cat "$sentinel"/run.json
+fi
 echo locked
 exec cat >/dev/null
 "#;
@@ -191,6 +197,14 @@ printf '%s\n' "$record" > "$tmp"
 chmod 644 "$tmp"
 mv -f "$tmp" "$sentinel"/run.json
 rm -f "$sentinel"/journal
+"#;
+
+/// digests PATH...: prints the hash of what's at each PATH, as Nix hashes
+/// store paths, in SRI format, on lines of their own.
+pub const DIGESTS: &str = r#"
+for path; do
+  nix-hash --type sha256 --sri "$path"
+done
 "#;
 
 /// The shell code adding the lines a command gets before its own arguments
@@ -312,8 +326,9 @@ fi
 /// which names another repository, no linked work trees, and only the
 /// configuration they write: the repository's format, the remote, branches,
 /// and submodules, whose repositories have their work tree in the work
-/// tree.  Hooks don't matter: populate's Git doesn't run them.  And each .git below the work tree, which Git uses for a
-/// submodule there, is a file naming a repository in .git/modules.
+/// tree.  Hooks don't matter: populate's Git doesn't run them.  And each
+/// .git below the work tree, which Git uses for a submodule there, is a
+/// file naming a repository in .git/modules.
 pub const GIT_PROBLEMS: &str = r#"
 git_problems() (
   path=$1

@@ -254,7 +254,12 @@ the record of the run, which a systemd path unit can watch, e.g.:
 - What got delivered: `commit` for `git` sources, `storePath` for `flake`,
   `flake-input`, and `derivation` sources, `derived` for `flake` and
   `flake-input` sources whose copy got patched or got its lock file
-  rewritten, and `target` for `symlink` sources.
+  rewritten, and `target` for `symlink` sources.  A `file` source's `record`
+  setting can add `commit`, `dirty`, and `digest`.
+
+The record tells what populate delivered, which is what's there unless
+something else changed the target directory meanwhile, which populate
+doesn't notice.
 
 The lock ends with the command holding it, which ends with populate, or
 with the ssh connection, which keepalives end a minute after the target
@@ -321,6 +326,30 @@ Supported attributes:
   (`--insecure-links`), which also lets it pass such symlinks on the way to
   the target path of a local target; with `false`, rsync syncs without them.
   Both print a warning.  Older versions of rsync aren't affected.
+
+* `record` (optional) -
+  what the [run record](#the-run-record-and-the-lock) tells about what got
+  delivered, besides whether it changed, an attribute set of flags, which
+  default to `false`, so nothing about a source that may hold secrets gets
+  recorded unless asked for:
+
+  * `commit`: if `path` is in a Git work tree, the commit `HEAD` names, as
+    `commit`, and whether `git status` lists anything in `path`, as
+    `dirty`: changes of tracked files, or untracked files that Git doesn't
+    ignore.  Files that rsync's filters exclude, or that Git ignores but
+    rsync delivers, don't count, so `dirty` tells whether `path` is the
+    commit as Git sees it.  Git runs on the deploying machine, without
+    hooks and file system monitors, on every run.
+  * `digest`: the hash of what's at the target path, after drawing inputs,
+    as `nix-hash --type sha256 --sri` prints it.  Populate only computes it
+    when the source changed since the last record, which takes reading all
+    of it, and else takes it from that record.
+
+  rsync can leave out what Git ignores, with `:- .gitignore` in a
+  `.rsync-filter` file in `path`, which reads the `.gitignore` files
+  therein as exclude patterns, though not exactly as Git does: rsync takes
+  a line `!` for clearing the patterns, not for including again, and it
+  doesn't read `.git/info/exclude`, or `core.excludesFile`.
 
 * `inputs` (optional) -
   inputs of the flake in this source to draw from other sources, see
