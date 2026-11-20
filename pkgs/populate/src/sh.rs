@@ -2,17 +2,17 @@
 //! than a POSIX shell and the usual tools.  Values come as positional
 //! parameters, never quoted into the code.
 
-/// The directories below the sentinel, once that is a directory, which have
-/// a directory for each source that needs one.  Besides, there is backup,
-/// which holds copies of the sources.
+/// The directories below the sentinel, a directory, which have a directory
+/// for each source that needs one.  Besides, there is backup, which holds
+/// copies of the sources, and the files lock, journal, and run.json, see
+/// LOCK and RECORD.
 pub const STATE_KINDS: &str = "derived flake-inputs flake-uploads flakes patches";
 
 /// Defines use_state SENTINEL NAME..., which prepares keeping state below
-/// the sentinel for the sources named NAME.  The sentinel only needs to
-/// exist, so it may be a file, which becomes a directory.  Populate changes
-/// and removes what's in its state directories, and a symlink in place of
-/// one would make it do that to whatever the link points to, so it refuses
-/// to use those.
+/// the sentinel for the sources named NAME.  Populate changes and removes
+/// what's in its state directories, and a symlink in place of one would
+/// make it do that to whatever the link points to, so it refuses to use
+/// those.
 pub fn use_state() -> String {
     format!(
         r#"
@@ -33,10 +33,6 @@ use_state() {{
       refuse_link "$sentinel"/"$state_kind"/"$state_name"
     done
   done
-  if test -f "$sentinel"; then
-    rm "$sentinel"
-    mkdir "$sentinel"
-  fi
 }}
 "#
     )
@@ -96,7 +92,8 @@ make_room_for_link() {
 /// every name, e.g. ones that end in blanks or contain newlines.  With LOG
 /// empty, entries get removed like remove_tree does; for entries of the
 /// target directory, LOG is the directory's name in the line printed for
-/// each entry, and nothing gets made writable first.  The names are
+/// each entry, which also prints pruned, and nothing gets made writable
+/// first.  The names are
 /// portable file names, which mean themselves as patterns of find.
 pub const REMOVE_OTHERS: &str = r#"
 remove_others() {
@@ -116,6 +113,7 @@ remove_others() {
       if test -n "$log"; then
         >&2 printf "pruning '\''%s/%s'\''...\n" "$log" "${path##*/}"
         rm -fR "$path"
+        echo pruned
       elif test -L "$path"; then
         rm "$path"
       else
@@ -128,8 +126,9 @@ remove_others() {
 "#;
 
 /// check SENTINEL NAME DIR FORCE: fails unless the sentinel exists, creating
-/// it and the target directory DIR first if FORCE isn't empty.  NAME is the
-/// sentinel's name in messages.
+/// it and the target directory DIR first if FORCE isn't empty.  A sentinel
+/// file becomes a directory, which populate keeps its state in.  NAME is
+/// the sentinel's name in messages.
 pub const CHECK: &str = r#"
 sentinel=$1 name=$2 dir=$3 force=$4
 # Before anything touches it, which would touch what it points to.
@@ -140,26 +139,79 @@ fi
 if test -n "$force"; then
   mkdir -vp "$dir" >&2
   if ! test -e "$sentinel"; then
-    touch "$sentinel"
+    mkdir "$sentinel"
   fi
 fi
 if ! test -e "$sentinel"; then
   >&2 printf 'error: missing sentinel file: %s\n' "$name"
   exit 1
 fi
+if ! test -d "$sentinel"; then
+  rm "$sentinel"
+  mkdir "$sentinel"
+fi
 "#;
 
-/// backup DIR NAME: copies the target directory DIR to the sentinel's
-/// backup directory.  NAME is the sentinel's name in messages.
+/// lock SENTINEL NAME ENTRY: waits for an exclusive lock on SENTINEL/lock,
+/// prints what's in SENTINEL/journal, which is there if a run didn't
+/// finish, appends ENTRY to it, and prints locked.  Then it keeps the lock
+/// until its standard input ends, which consumers of the target directory
+/// can wait for by taking a shared lock.  NAME is the sentinel's name in
+/// messages.  Writing to a symlink in place of the lock or the journal
+/// would write to what it points to, so it refuses those.
+pub const LOCK: &str = r#"
+sentinel=$1 name=$2 entry=$3
+for file in lock journal; do
+  if test -L "$sentinel"/"$file"; then
+    >&2 printf 'error: %s/%s is a symlink, but populate needs a file of its own there\n' \
+        "$name" "$file"
+    exit 1
+  fi
+done
+exec 9>>"$sentinel"/lock
+if ! flock -n 9; then
+  >&2 printf 'waiting for the lock on %s/lock...\n' "$name"
+  flock 9
+fi
+if test -f "$sentinel"/journal; then
+  cat "$sentinel"/journal
+fi
+printf '%s\n' "$entry" >> "$sentinel"/journal
+echo locked
+exec cat >/dev/null
+"#;
+
+/// record SENTINEL RECORD: writes RECORD to SENTINEL/run.json, replacing
+/// what's there at once, and removes the journal, which the record sums
+/// up.
+pub const RECORD: &str = r#"
+sentinel=$1 record=$2
+tmp=$(mktemp "$sentinel"/run.json.XXXXXX)
+printf '%s\n' "$record" > "$tmp"
+chmod 644 "$tmp"
+mv -f "$tmp" "$sentinel"/run.json
+rm -f "$sentinel"/journal
+"#;
+
+/// The shell code adding the lines a command gets before its own arguments
+/// to the journal: the journal's path, the number of lines, and the lines.
+pub const JOURNAL: &str = r#"
+journal=$1 journal_lines=$2
+shift 2
+while test "$journal_lines" -gt 0; do
+  printf '%s\n' "$1" >> "$journal"
+  shift
+  journal_lines=$((journal_lines - 1))
+done
+"#;
+
+/// backup DIR: copies the target directory DIR to the sentinel's backup
+/// directory.
 pub fn backup() -> String {
     use_state()
         + r#"
-dir=$1 name=$2
+dir=$1
 use_state "$dir"/.populate
-if ! test -d "$dir"/.populate; then
-  >&2 printf 'error: sentinel file is not a directory: %s\n' "$name"
-  exit 1
-fi
 rsync >&2 \
     -aAXF \
     --delete \
@@ -172,7 +224,8 @@ rsync >&2 \
 
 /// prune DIR LOG NAME...: removes the entries of the target directory DIR
 /// that aren't sources named NAME, logging them with LOG for DIR, and
-/// populate's state that only sources that are gone needed.  The names
+/// printing pruned for each, and populate's state that only sources that
+/// are gone needed.  The names
 /// after -- are the ones of flake and flake-input sources, whose roots for
 /// the garbage collector stay.
 pub fn prune() -> String {
@@ -195,7 +248,7 @@ cd "$dir"
 remove_others . "$log" .populate $names
 roots=.populate/flake-inputs
 if test -d "$roots"; then
-  remove_others "$roots" "" "$@"
+  remove_others "$roots" "" "$@" >&2
   if test -z "$(ls -A "$roots")"; then
     rmdir "$roots"
   fi
@@ -227,18 +280,30 @@ fi
 }
 
 /// derivation PATH NAME TEXT: builds the Nix expression TEXT on the target,
-/// with a link to the result at PATH.
+/// with a link to the result at PATH, printing the result, and changed if
+/// the link changed.
 pub fn derivation() -> String {
     LINKS.to_string()
         + r#"
+old=$(readlink "$1") || old=
 make_room_for_link "$1" "$2"
 nix-build -E "$3" -o "$1" >&2
+new=$(readlink "$1")
+printf '%s\n' "$new"
+if test "$new" != "$old"; then
+  echo changed
+fi
 "#
 }
 
-/// symlink PATH TARGET: makes PATH a symlink to TARGET.
+/// symlink PATH TARGET: makes PATH a symlink to TARGET, printing changed
+/// if it wasn't one.
 pub const SYMLINK: &str = r#"
+old=$(readlink "$1") || old=
 ln -fnsT -- "$2" "$1"
+if test "$old" != "$2"; then
+  echo changed
+fi
 "#;
 
 /// Defines git_problems PATH, which prints why populate can't use the .git
@@ -329,7 +394,8 @@ git_problems() (
 /// EXCLUDE pattern.  SHALLOW, FETCH_ALWAYS, and RECLONE are flags, empty
 /// for false.  NAME is PATH's name in messages.  Prints checked if
 /// git_problems found nothing wrong with the work tree that was there,
-/// which then is what's there, and else nothing; what commands print goes
+/// which then is what's there, changed if anything changed, and commit and
+/// the commit checked out, on lines of their own; what commands print goes
 /// to standard error.
 pub fn git() -> String {
     LINKS.to_string()
@@ -337,8 +403,10 @@ pub fn git() -> String {
         + r#"
 # What commands print goes to standard error.  None of them gets the
 # standard output, which populate reads to its end, so nothing they leave
-# running, e.g. git gc --auto, keeps populate waiting.
-checked=
+# running, e.g. git gc --auto, keeps populate waiting.  What submodule
+# updates and cleaning print, which tells whether they changed anything,
+# goes through a file, for the same reason.
+checked= changed=
 deliver_git() {
   path=$1 name=$2 url=$3 ref=$4 shallow=$5 fetch_always=$6 reclone=$7
   shift 7
@@ -380,6 +448,7 @@ deliver_git() {
     fi
   fi
   if ! test -e "$path"; then
+    changed=1
     if test -n "$shallow"; then
       git init "$path"
     else
@@ -431,21 +500,37 @@ deliver_git() {
   commit=$(git rev-parse --verify --quiet "$hash^{commit}") || commit=
   changes=$(git status --porcelain --untracked-files=no) || changes=unknown
   if test -z "$head" || test "$head" != "$commit" || test -n "$changes"; then
+    changed=1
     git reset --hard "$hash"
   fi
-  git submodule update --init --recursive
+  log=$(mktemp)
+  git submodule update --init --recursive > "$log"
+  if test -s "$log"; then
+    changed=1
+    cat "$log"
+  fi
   n=$#
   while test "$n" -gt 0; do
     set -- "$@" -e "$1"
     shift
     n=$((n - 1))
   done
-  git clean -dfx "$@"
+  git clean -dfx "$@" > "$log"
+  if test -s "$log"; then
+    changed=1
+    cat "$log"
+  fi
+  rm "$log"
+  commit=$(git rev-parse HEAD)
 }
 deliver_git "$@" >&2
 if test -n "$checked"; then
-  printf checked
+  echo checked
 fi
+if test -n "$changed"; then
+  echo changed
+fi
+printf 'commit %s\n' "$commit"
 "#
 }
 
@@ -710,7 +795,7 @@ fi
     /// the source NAME.  Roots get added before obsolete ones get removed,
     /// so the inputs stay rooted.  LINK_NAME is LINK_PATH's name in
     /// messages, and DERIVED isn't empty if LINK_PATH is in the source's
-    /// derived state.
+    /// derived state.  Prints changed if the link changed.
     pub const LINK: &str = r#"
 sentinel=$1 name=$2 link_path=$3 link_name=$4 derived=$5 subdir=$6 path=$7
 shift 7
@@ -719,11 +804,15 @@ use_state "$sentinel" "$name"
 if test -n "$derived"; then
   mkdir -p "$(dirname "$link_path")"
 fi
+old=$(readlink "$link_path") || old=
 make_room_for_link "$link_path" "$link_name"
 nix-store --realise "$path" --add-root "$link_path" --indirect >/dev/null
 # The garbage collector follows the link into the store path.
 if test -n "$subdir"; then
   ln -fns "$path/$subdir" "$link_path"
+fi
+if test "$(readlink "$link_path")" != "$old"; then
+  echo changed
 fi
 # Left behind by an interrupted run, or not needed anymore.
 remove_upload
@@ -953,12 +1042,17 @@ rm -R "$empty"
 "#;
 
     /// lock DIR URL ARG...: rewrites the lock file of the flake in DIR,
-    /// at URL, with nix flake lock's arguments ARG.
+    /// at URL, with nix flake lock's arguments ARG, printing changed if
+    /// that changed it.
     pub const LOCK: &str = r#"
 dir=$1 url=$2
 shift 2
 own_lock "$dir"
+old=$(cat "$dir"/flake.lock 2>/dev/null) || old=
 nix flake lock "$@" "$url" >&2
+if test "$(cat "$dir"/flake.lock)" != "$old"; then
+  echo changed
+fi
 "#;
 
     /// derived_state DIR TARGET_PATH PATCH_DIR CHECKED DRAWN...: removes
@@ -1021,7 +1115,7 @@ done
     /// KEY_FILE KEY: puts a copy of ORIGINAL, made in WORK and patched with
     /// the patches in PATCH_DIR, if that isn't empty, at TARGET_PATH, and
     /// writes its key.  TARGET_NAME is TARGET_PATH's name in messages, and
-    /// NAME the source's.
+    /// NAME the source's.  Prints changed.
     pub const MATERIALIZE: &str = r#"
 original=$1 work=$2 target_path=$3 target_name=$4 patch_dir=$5 name=$6
 key_file=$7 key=$8
@@ -1037,6 +1131,7 @@ remove_foreign_link "$target_path" "$target_name"
 rm -fR "$target_path"
 mv "$work" "$target_path"
 write_key "$key_file" "$key"
+echo changed
 "#;
 
     /// add DIR PATH SUBDIR TARGET_PATH TARGET_NAME RESULT PATCH_DIR NAME
@@ -1047,7 +1142,7 @@ write_key "$key_file" "$key"
     /// SUBDIR rewritten with nix flake lock's arguments ARG, if any, and
     /// added to the store, rooted by DIR/result, with its key in DIR/key.
     /// TARGET_NAME is TARGET_PATH's name in messages, and NAME the
-    /// source's.
+    /// source's.  Prints the store path, and changed if the link changed.
     pub const ADD: &str = r#"
 dir=$1 path=$2 subdir=$3 target_path=$4 target_name=$5 result=$6
 patch_dir=$7 name=$8 key=$9
@@ -1074,15 +1169,21 @@ if test -z "$result"; then
   nix-store --realise "$result" --add-root "$dir"/result --indirect >/dev/null
   write_key "$dir"/key "$key"
 fi
+old=$(readlink "$target_path") || old=
 make_room_for_link "$target_path" "$target_name"
 # The source's derived state roots the store path.
 ln -fns "$result${subdir:+/$subdir}" "$target_path"
+printf '%s\n' "$result"
+if test "$result${subdir:+/$subdir}" != "$old"; then
+  echo changed
+fi
 "#;
 
     /// generate DIR TEXT: makes DIR a flake, with TEXT as its flake.nix,
     /// and locks it anew, so the lock file pins what the inputs are now.
     /// What Nix prints about creating the lock file only gets printed if
-    /// it differs from the one there was, since that's on every run.
+    /// it differs from the one there was, since that's on every run, and so
+    /// does changed.
     pub const GENERATE: &str = r#"
 dir=$1 text=$2
 mkdir -p "$(dirname "$dir")"
@@ -1103,6 +1204,7 @@ if ! nix flake lock "path:$(url_path "$(pwd -P)")" >&2 2>"$log"; then
 fi
 if test "$(cat flake.lock)" != "$old_lock"; then
   cat "$log" >&2
+  echo changed
 fi
 rm "$log"
 "#;

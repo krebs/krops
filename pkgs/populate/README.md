@@ -27,9 +27,10 @@ fetches the program's dependencies from [crates.io](https://crates.io).
 
 populate runs rsync, ssh, Git, Nix, pass, and passage as the sources need
 them, found in `PATH`, as well as a POSIX shell, coreutils, and findutils.
-The target needs a POSIX shell, coreutils, findutils, rsync, `patch` for
-sources with `patches`, Git for `git` sources, and Nix, and, if remote,
-ssh access as root, or, with `--sudo`, as a user who may use `sudo`.
+The target needs a POSIX shell, coreutils, findutils, `flock`, rsync,
+`patch` for sources with `patches`, Git for `git` sources, and Nix, and, if
+remote, ssh access as root, or, with `--sudo`, as a user who may use
+`sudo`.
 NixOS has all of them but Git, and rsync as long as
 `environment.defaultPackages` contains it.  Features that say so need Nix
 with flake support (Nix 2.4 or later) on the machine that uses them.
@@ -205,9 +206,61 @@ everything else.  It doesn't change or remove anything outside:
   and replaces lock files it rewrites, by renaming new files into place, and
   only makes directories writable that it removes.
 
-* Populate keeps its state in the sentinel, `.populate`, which becomes a
-  directory once there is state to keep.  Populating fails if the sentinel,
-  or a directory populate needs therein, is a symlink.
+* Populate keeps its state in the sentinel, `.populate`, a directory, which
+  a sentinel file becomes.  Populating fails if the sentinel, or a directory
+  populate needs therein, is a symlink.
+
+### The run record and the lock
+
+Populate holds an exclusive lock on `.populate/lock`, with `flock`, from
+before it changes anything in the target directory until it's done.  Runs
+wait for each other, and a consumer of the target directory, e.g. a service
+building what got deployed, can take a shared lock while it uses what's
+there, which populate waits for, saying so, so it never sees a half
+delivered target directory:
+
+```sh
+flock --shared /var/src/.populate/lock cp -R /var/src/some-source /build
+```
+
+After delivering all sources, populate replaces `.populate/run.json` with
+the record of the run, which a systemd path unit can watch, e.g.:
+
+```json
+{
+  "version": 0,
+  "populate": "2.0.0",
+  "started": "2026-11-20T12:34:56Z",
+  "finished": "2026-11-20T12:35:01Z",
+  "changed": true,
+  "sources": {
+    "nixos-config": { "type": "file", "changed": false },
+    "nixpkgs": { "type": "git", "changed": true, "commit": "ac588ef1c914..." },
+    "dotnix": { "type": "flake-input", "changed": false,
+                "storePath": "/nix/store/...-source", "derived": "/nix/store/...-source" },
+    "current": { "type": "symlink", "changed": false, "target": "nixos-config" }
+  }
+}
+```
+
+- `version` is the record's format, and `populate` populate's version.
+- `started` and `finished` are in UTC, by the clock of the machine populate
+  runs on.
+- `changed` tells whether anything in the target directory changed since
+  the last record, also in runs that didn't finish, and so does each
+  source's.  Pruning anything counts as a change of the target directory.
+  `file`, `pipe`, `pass`, and `passage` sources get nothing else, so the
+  record holds nothing about secrets.
+- What got delivered: `commit` for `git` sources, `storePath` for `flake`,
+  `flake-input`, and `derivation` sources, `derived` for `flake` and
+  `flake-input` sources whose copy got patched or got its lock file
+  rewritten, and `target` for `symlink` sources.
+
+Until a run finishes, populate keeps a journal in `.populate/journal` of
+what it began changing, and what that changed, which the next run that
+finishes sums up in its record.  A `file` or `git` source whose lock file
+populate rewrites in place gets its original lock file back, and rewritten
+again, on every run, so it counts as changed every time.
 
 
 ## Source Types
@@ -286,8 +339,7 @@ if it lacks any of them, and the target path becomes a symlink to the
 flake's store path, registered as garbage collector root.  For flakes in a subdirectory, e.g.
 `git+file:/src/mono?dir=sub`, the symlink points at that subdirectory of the
 store path.  The inputs get garbage collector roots in
-`.populate/flake-inputs/<name>`, which turns the sentinel file into a
-directory.
+`.populate/flake-inputs/<name>`.
 
 Supported attributes:
 

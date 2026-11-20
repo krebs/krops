@@ -4,10 +4,10 @@
 use crate::spec::Target;
 use std::fmt;
 use std::fs;
-use std::io::Write;
+use std::io::{BufRead, BufReader, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use std::process::{Command, ExitStatus, Stdio};
+use std::process::{Child, Command, ExitStatus, Stdio};
 use std::sync::atomic::{AtomicI32, Ordering};
 
 /// Why populate stops before delivering everything.
@@ -111,6 +111,25 @@ pub struct Context {
     /// nothing wrong with during this run, so finding that out, which
     /// takes looking through all of the work tree, happens only once.
     git_checked: std::cell::RefCell<std::collections::BTreeSet<String>>,
+    /// The journal on the target, once populate holds the lock, see lock.
+    journal: std::cell::RefCell<Option<String>>,
+    /// This run's entries of the journal, and how many of them are in the
+    /// journal on the target already.
+    entries: std::cell::RefCell<(Vec<serde_json::Value>, usize)>,
+}
+
+/// The lock on the target directory, which the command holding it keeps
+/// until populate drops this, or ends.
+pub struct Lock {
+    child: Child,
+}
+
+impl Drop for Lock {
+    fn drop(&mut self) {
+        // Its input ending ends the command, which releases the lock.
+        drop(self.child.stdin.take());
+        let _ = self.child.wait();
+    }
 }
 
 impl Context {
@@ -137,6 +156,8 @@ impl Context {
             ssh_nix,
             metadata: Default::default(),
             git_checked: Default::default(),
+            journal: Default::default(),
+            entries: Default::default(),
         };
         context.write_ssh(&context.ssh, &context.ssh_options(true))?;
         context.write_ssh(&context.ssh_nix, &context.ssh_options(false))?;
@@ -209,8 +230,30 @@ impl Context {
     /// A command running the shell code script on the target, with args as
     /// its positional parameters.  Over ssh, the remote shell gets it as
     /// one quoted command, run via sudo if the target says so.
+    /// The entries of the journal not in the journal on the target yet get
+    /// there first, so they precede what the command changes.
     pub fn shell(&self, script: &str, args: &[&str]) -> Command {
-        let script = format!("set -efu\n{script}");
+        let mut lines = Vec::new();
+        if let Some(journal) = &*self.journal.borrow() {
+            let (entries, flushed) = &mut *self.entries.borrow_mut();
+            if *flushed < entries.len() {
+                lines.push(journal.clone());
+                lines.push((entries.len() - *flushed).to_string());
+                lines.extend(entries[*flushed..].iter().map(|entry| entry.to_string()));
+                *flushed = entries.len();
+            }
+        }
+        let script = if lines.is_empty() {
+            format!("set -efu\n{script}")
+        } else {
+            format!("set -efu\n{}{script}", crate::sh::JOURNAL)
+        };
+        let args: Vec<&str> = lines
+            .iter()
+            .map(String::as_str)
+            .chain(args.iter().copied())
+            .collect();
+        let args = args.as_slice();
         if self.local {
             let mut command = Command::new("sh");
             command.arg("-c").arg(script).arg("sh").args(args);
@@ -231,6 +274,64 @@ impl Context {
             command.arg(&self.target.host).arg(words.join(" "));
             command
         }
+    }
+
+    /// Takes the lock on the target directory, whose sentinel is sentinel,
+    /// adding entry to the journal, which entries go to from now on.
+    /// Returns the lock, and the lines that runs that didn't finish left in
+    /// the journal.
+    pub fn lock(&self, sentinel: &str, entry: serde_json::Value) -> Result<(Lock, Vec<String>)> {
+        let mut command = self.shell(
+            crate::sh::LOCK,
+            &[sentinel, &self.name(sentinel), &entry.to_string()],
+        );
+        command
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::inherit());
+        let mut child = command.spawn().map_err(|e| spawn_error(&command, e))?;
+        let stdout = child.stdout.take().expect("piped");
+        let mut lock = Lock { child };
+        let mut previous = Vec::new();
+        let mut locked = false;
+        for line in BufReader::new(stdout).lines() {
+            let line = line.map_err(|e| {
+                Failure::Message(format!(
+                    "error: can't read from the command taking the lock: {e}"
+                ))
+            })?;
+            if line == "locked" {
+                locked = true;
+                break;
+            }
+            previous.push(line);
+        }
+        check_signal()?;
+        if !locked {
+            drop(lock.child.stdin.take());
+            let status = lock.child.wait().map_err(|e| spawn_error(&command, e))?;
+            return Err(if status.success() {
+                Failure::Message("error: can't take the lock on the target directory".to_string())
+            } else {
+                failed(status)
+            });
+        }
+        *self.journal.borrow_mut() = Some(format!("{sentinel}/journal"));
+        self.entries.borrow_mut().0.push(entry);
+        self.entries.borrow_mut().1 = 1;
+        Ok((lock, previous))
+    }
+
+    /// Adds entry to the journal, see the record module.
+    pub fn note(&self, entry: serde_json::Value) {
+        if self.journal.borrow().is_some() {
+            self.entries.borrow_mut().0.push(entry);
+        }
+    }
+
+    /// This run's entries of the journal.
+    pub fn entries(&self) -> Vec<serde_json::Value> {
+        self.entries.borrow().0.clone()
     }
 
     /// Runs shell code on the target, with its output going where
@@ -370,6 +471,27 @@ pub fn output(command: &mut Command) -> Result<String> {
             Ok(String::from_utf8_lossy(&output.stdout).into_owned())
         }
         Ok(output) => Err(failed(output.status)),
+        Err(e) => Err(spawn_error(command, e)),
+    }
+}
+
+/// Runs a command, passing each line of its output to each, failing like
+/// status.
+pub fn lines(command: &mut Command, mut each: impl FnMut(&str)) -> Result<()> {
+    command.stdout(Stdio::piped());
+    let mut child = command.spawn().map_err(|e| spawn_error(command, e))?;
+    let stdout = child.stdout.take().expect("piped");
+    for line in BufReader::new(stdout).lines() {
+        match line {
+            Ok(line) => each(&line),
+            Err(_) => break,
+        }
+    }
+    let result = child.wait();
+    check_signal()?;
+    match result {
+        Ok(status) if status.success() => Ok(()),
+        Ok(status) => Err(failed(status)),
         Err(e) => Err(spawn_error(command, e)),
     }
 }

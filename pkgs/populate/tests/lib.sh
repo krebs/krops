@@ -18,6 +18,14 @@ nix() {
   command nix --extra-experimental-features 'nix-command flakes' "$@"
 }
 
+# usage: record ATTRPATH
+# Prints what's at ATTRPATH, e.g. sources.x.changed, in the record of the
+# last run in the target directory $T, as JSON.
+record() {
+  nix-instantiate --eval --json --strict -E \
+      "(builtins.fromJSON (builtins.readFile $T/.populate/run.json)).$1"
+}
+
 # Evaluates a flake output without network access to the fixtures, so all
 # inputs must be in the store.  An empty cache directory keeps Nix from
 # restoring inputs from its fetcher cache.

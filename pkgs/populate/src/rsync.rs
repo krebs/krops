@@ -84,8 +84,8 @@ impl Config {
 }
 
 /// Transfers source_path, a directory's contents or a file, to path on the
-/// target.
-pub fn transfer(context: &Context, config: &Config, source_path: &str, path: &str) -> Result<()> {
+/// target, returning whether that changed anything there.
+pub fn transfer(context: &Context, config: &Config, source_path: &str, path: &str) -> Result<bool> {
     context.run(&sh::break_hard_links(), &[path, &context.name(path)])?;
     let mut source = source_path.to_string();
     if Path::new(source_path).is_dir() {
@@ -123,11 +123,24 @@ pub fn transfer(context: &Context, config: &Config, source_path: &str, path: &st
     if config.delete_excluded {
         command.arg("--delete-excluded");
     }
-    command
-        .arg(&source)
-        .arg(context.rsync_destination(path))
-        .stdout(run::stderr());
-    run::status(&mut command)
+    command.arg(&source).arg(context.rsync_destination(path));
+    let mut changed = false;
+    run::lines(&mut command, |line| {
+        changed |= itemizes_change(line);
+        eprintln!("{line}");
+    })?;
+    Ok(changed)
+}
+
+/// Whether a line rsync prints itemizes a change: what --itemize-changes
+/// prints for an item, eleven characters, the second the type of the item,
+/// or *deleting, followed by a blank.
+fn itemizes_change(line: &str) -> bool {
+    let Some((item, _)) = line.split_once(' ') else {
+        return false;
+    };
+    item == "*deleting"
+        || item.len() == 11 && matches!(item.as_bytes()[1], b'f' | b'd' | b'L' | b'D' | b'S')
 }
 
 /// rsync 3.5.0 and later open .rsync-filter files with a stricter walk than
@@ -300,6 +313,16 @@ fn unescape(escaped: &str) -> std::path::PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn itemized_changes() {
+        assert!(itemizes_change(">f.st...... flake.nix 82/39"));
+        assert!(itemizes_change("cd+++++++++ .git/objects/25/ 0/4.00K"));
+        assert!(itemizes_change(".f..t...... x 0/1"));
+        assert!(itemizes_change("*deleting   old"));
+        assert!(!itemizes_change("skipping non-regular file \"x\""));
+        assert!(!itemizes_change("sent 10 bytes"));
+    }
 
     #[test]
     fn versions() {

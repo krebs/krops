@@ -7,6 +7,7 @@
 //! resolve to, the lock files of flakes, and what tells whether a derived
 //! copy needs to be made again.
 
+use crate::populate::Outcome;
 use crate::run::{Context, Failure, Result};
 use crate::sh;
 use crate::spec::{Follows, Source};
@@ -538,13 +539,23 @@ impl<'a> Flakes<'a> {
 
     /// Rewrites the lock file of the flake in a file or git source in
     /// place.
-    fn rewrite(&self, name: &str) -> Result<()> {
+    fn rewrite(&self, name: &str) -> Result<Outcome> {
         let args = self.override_args(name)?;
         let resolved = self.resolve(&[self.path(name)], false)?;
         let url = Self::flake_url(name, &resolved[0])?;
         let mut all = vec![resolved[0].path.as_str(), url.as_str()];
         all.extend(args.iter().map(String::as_str));
-        self.run(sh::draw::LOCK, true, &all)
+        self.changed(sh::draw::LOCK, true, &all)
+    }
+
+    /// Whether snippet, run like run runs it, printed changed.
+    fn changed(&self, snippet: &str, flakes: bool, args: &[&str]) -> Result<Outcome> {
+        let output = self
+            .context
+            .output(&Self::on_target(snippet, flakes), args)?;
+        Ok(Outcome::changed(
+            output.lines().any(|line| line == "changed"),
+        ))
     }
 
     /// Derives what the target path of a flake or flake-input source gets
@@ -557,7 +568,7 @@ impl<'a> Flakes<'a> {
     /// and others also if the sources they draw inputs from change.  The
     /// key of a copy, in .populate/derived/<name>/key, is the hash of all
     /// that, see key_text.
-    fn derive(&self, name: &str) -> Result<()> {
+    fn derive(&self, name: &str) -> Result<Outcome> {
         let settings = &self.sources[name].settings;
         let materialize = bool_setting(settings, "materialize", false);
         let rewrite_lock =
@@ -617,10 +628,11 @@ impl<'a> Flakes<'a> {
         let unchanged = old_key == key;
 
         if materialize {
+            let mut outcome = Outcome::default();
             if !unchanged || target_kind != "directory" {
                 let work = format!("{state}/work");
                 let key_path = format!("{state}/key");
-                self.run(
+                outcome = self.changed(
                     sh::draw::MATERIALIZE,
                     false,
                     &[
@@ -639,9 +651,9 @@ impl<'a> Flakes<'a> {
                 let url = self.own_url(name)?;
                 let mut all = vec![target_path.as_str(), url.as_str()];
                 all.extend(args.iter().map(String::as_str));
-                self.run(sh::draw::LOCK, true, &all)?;
+                outcome.changed |= self.changed(sh::draw::LOCK, true, &all)?.changed;
             }
-            return Ok(());
+            return Ok(outcome);
         }
 
         let (path, subdir) = split_store_path(original);
@@ -658,13 +670,18 @@ impl<'a> Flakes<'a> {
             &key,
         ];
         all.extend(args.iter().map(String::as_str));
-        self.run(sh::draw::ADD, rewrite_lock, &all)
+        let output = self
+            .context
+            .output(&Self::on_target(sh::draw::ADD, rewrite_lock), &all)?;
+        let mut lines = output.lines();
+        let derived = lines.next().unwrap_or_default();
+        Ok(Outcome::changed(lines.any(|line| line == "changed")).with("derived", derived))
     }
 
     /// Generates the flake of a source in .populate/flakes/<name>, which
     /// re-exports the outputs of the flake in the source, with inputs drawn
     /// from other sources.
-    fn generate(&self, name: &str) -> Result<()> {
+    fn generate(&self, name: &str) -> Result<Outcome> {
         let json = |s: &str| serde_json::to_string(s).expect("serializes");
         let url = self.own_url(name)?;
         let drawn = self.drawn_from(name);
@@ -699,7 +716,7 @@ impl<'a> Flakes<'a> {
             "  outputs = inputs: inputs.{};\n}}\n",
             json(&input_name(name))
         );
-        self.run(
+        self.changed(
             sh::draw::GENERATE,
             true,
             &[&self.state("flakes", name), &text],
@@ -791,14 +808,20 @@ pub fn flakes(context: &Context, dir: &str, sources: &BTreeMap<String, Source>) 
                 .map(|f| f.source.clone())
                 .collect()
         };
+        // What changes a source goes into the journal like delivering it.
+        let change = |name: &str, outcome: &dyn Fn() -> Result<Outcome>| -> Result<()> {
+            context.note(serde_json::json!({ "begin": name }));
+            outcome()?.note(context, name);
+            Ok(())
+        };
         for name in toposort(&names, &drawn_from) {
             if flakes.derived.contains(name) {
-                flakes.derive(name)?;
+                change(name, &|| flakes.derive(name))?;
             }
             if flakes.generated.contains(name) {
-                flakes.generate(name)?;
+                change(name, &|| flakes.generate(name))?;
             } else if flakes.drawing.contains(name) && !flakes.derived.contains(name) {
-                flakes.rewrite(name)?;
+                change(name, &|| flakes.rewrite(name))?;
             }
         }
     }

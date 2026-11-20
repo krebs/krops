@@ -813,6 +813,77 @@ in
         }
       ];
     }))
+    # The record of a run: what got delivered, and whether anything changed
+    # since the last record, also in runs that failed, which leave the
+    # record as it was.
+    (s "record" (let
+      sources = {
+        g.git = { url = gitUrl; ref = gitHead; };
+        l.symlink = "x";
+        x.file = "/fixtures/alt";
+      };
+      # Whether x, and g and l, changed.
+      changed = x: others: ''
+        expect_eq changed "$(record changed)" ${if x || others then "true" else "false"}
+        expect_eq "x changed" "$(record sources.x.changed)" ${lib.boolToString x}
+        expect_eq "g changed" "$(record sources.g.changed)" ${lib.boolToString others}
+        expect_eq "l changed" "$(record sources.l.changed)" ${lib.boolToString others}
+      '';
+    in {
+      phases = [
+        {
+          inherit sources;
+          check = changed true true + ''
+            expect_eq version "$(record version)" 0
+            expect_eq "x type" "$(record sources.x.type)" '"file"'
+            expect_eq "g commit" "$(record sources.g.commit)" '"${gitHead}"'
+            expect_eq "l target" "$(record sources.l.target)" '"x"'
+            test ! -e "$T"/.populate/journal || fail "journal remains"
+          '';
+        }
+        {
+          inherit sources;
+          check = changed false false + ''
+            cp "$T"/.populate/run.json "$T".record
+          '';
+          mutate = ''
+            echo changed > "$T"/x/flake.nix
+          '';
+        }
+        {
+          # x, which comes before y, gets delivered again.
+          sources = sources // { y.pipe = "/run/current-system/sw/bin/false"; };
+          expect = { fail = ""; status = 1; };
+          check = ''
+            cmp "$T"/.populate/run.json "$T".record || fail "record changed"
+            test -e "$T"/.populate/journal || fail "journal missing"
+          '';
+        }
+        {
+          # What the failed run changed.
+          inherit sources;
+          check = changed true false;
+        }
+      ];
+    }))
+    # A consumer of the target directory holding a shared lock delays the
+    # next run.
+    (s "lock" {
+      phases = [
+        {
+          sources.x.file = "/fixtures/alt";
+          mutate = ''
+            setsid flock --shared "$T"/.populate/lock sleep 5 \
+                </dev/null >/dev/null 2>&1 &
+            sleep 1
+          '';
+        }
+        {
+          sources.x.file = "/fixtures/alt";
+          output = [ "waiting for the lock on" ];
+        }
+      ];
+    })
     # A materialized input is a writable copy, patched and with a rewritten
     # lock file, which gets made again only when what it derives from
     # changes, and becomes a link again when not materialized anymore.
@@ -1818,6 +1889,12 @@ in
       message = "error: sentinel file is a symlink";
     })
     (state "backup" { entry = ".populate/backup"; backup = true; })
+    (map
+      (file: state file {
+        entry = ".populate/${file}";
+        message = "/.populate/${file} is a symlink, but populate needs a file of its own there";
+      })
+      [ "lock" "journal" ])
     (map
       (entry: state (lib.replaceStrings ["/"] ["-"] entry) {
         entry = ".populate/${entry}";

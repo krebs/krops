@@ -15,6 +15,7 @@
   "flake-input-dep-remote-fetchOnTarget0-inputsgenerated-materialize0"
   "flake-input-sub-local-fetchOnTarget0-materialize0"
   "state-sentinel-local"
+  "record-sudo"
   "prune-remote"
   "names-local"
   "paths-local"

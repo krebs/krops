@@ -8,6 +8,7 @@ mod cli;
 mod flake;
 mod flake_input;
 mod populate;
+mod record;
 mod rsync;
 mod run;
 mod sh;

@@ -8,6 +8,12 @@
   each set of arguments.  `pkgs.populate-unwrapped` is the program;
   `pkgs.populate`, `writeDeploy`, and the other functions keep their
   arguments, and `pkgs.populate` also takes a target string.
+- Populate holds a lock on `.populate/lock` while it runs, which consumers
+  of the target directory can wait for with a shared lock, and writes the
+  record of each run that delivers everything to `.populate/run.json`:
+  whether anything changed since the last record, for each source, and
+  what got delivered.  The sentinel is a directory, which a sentinel file
+  becomes, and the target needs `flock`.
 - `lib/with.nix` is krops' lib without nixpkgs' lib, which it takes from
   its caller, e.g. a flake's `nixpkgs.lib`.  `pkgs.krops`, `pkgs.populate`
   and krops' flake use the nixpkgs lib they get, instead of

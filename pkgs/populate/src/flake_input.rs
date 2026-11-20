@@ -3,6 +3,7 @@
 //! collector roots for its own inputs.
 
 use crate::flake::derives_flake;
+use crate::populate::Outcome;
 use crate::rsync::{self, Config};
 use crate::run::{self, Context, Failure, Result};
 use crate::sh;
@@ -273,14 +274,15 @@ fn flag(settings: &Map<String, Value>, key: &str, default: bool) -> bool {
 }
 
 /// Delivers the flake or flake-input source named name to path, preparing
-/// what it needs on the deploying machine in workdir.
+/// what it needs on the deploying machine in workdir.  What a derived
+/// source's target path gets, the flakes step tells, see flake::derive.
 pub fn deliver(
     context: &Context,
     name: &str,
     path: &str,
     source: &Source,
     workdir: &Path,
-) -> Result<()> {
+) -> Result<Outcome> {
     let settings = &source.settings;
     let url = setting(settings, "url")
         .and_then(Value::as_str)
@@ -344,7 +346,7 @@ pub fn deliver(
         }
         Ok::<_, Failure>(paths)
     };
-    let link = |subdir: &str, paths: &[String]| -> Result<()> {
+    let link = |subdir: &str, paths: &[String]| -> Result<Outcome> {
         let link_name = context.name(&link_path);
         let mut args = vec![
             sentinel.as_str(),
@@ -355,7 +357,9 @@ pub fn deliver(
             subdir,
         ];
         args.extend(paths.iter().map(String::as_str));
-        context.run(&on_target(sh::flake::LINK, None), &args)
+        let output = context.output(&on_target(sh::flake::LINK, None), &args)?;
+        let changed = !derived && output.contains("changed");
+        Ok(Outcome::changed(changed).with("storePath", &paths[0]))
     };
     let on_target_output = |what: &'static str| {
         move |snippet: &str, args: &[&str]| context.output(&on_target(snippet, Some(what)), args)
@@ -591,6 +595,7 @@ fn upload_patches(
         &dir.to_string_lossy(),
         &format!("{sentinel}/patches/{name}"),
     )
+    .map(|_| ())
 }
 
 /// Uploads the flake itself to a target that can't fetch it, unless the
@@ -610,7 +615,7 @@ fn upload_self(context: &Context, name: &str, sentinel: &str, self_path: &str) -
         .join("flake-uploads")
         .join(name)
         .join("tree");
-    rsync::transfer(context, &config, self_path, &upload.to_string_lossy())
+    rsync::transfer(context, &config, self_path, &upload.to_string_lossy()).map(|_| ())
 }
 
 #[cfg(test)]
