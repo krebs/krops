@@ -32,7 +32,7 @@ pub fn shell(options: ShellOptions) -> ExitCode {
         words.push("sudo".to_string());
     }
     words.extend([
-        "/bin/sh".to_string(),
+        run::SH.to_string(),
         "-c".to_string(),
         options.script,
         "sh".to_string(),

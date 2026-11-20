@@ -187,7 +187,7 @@ fn insecure_links(context: &Context, config: &Config, source: &str) -> Result<bo
     }
     // A dry run of the same transfer, as far as filtering goes.
     let log = run::output(
-        Command::new("sh")
+        Command::new(run::SH)
             .arg("-c")
             .arg(r#"rsync "$@" 2>&1 || :"#)
             .arg("sh")
