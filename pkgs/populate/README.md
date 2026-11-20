@@ -256,6 +256,12 @@ the record of the run, which a systemd path unit can watch, e.g.:
   `flake-input` sources whose copy got patched or got its lock file
   rewritten, and `target` for `symlink` sources.
 
+The lock ends with the command holding it, which ends with populate, or
+with the ssh connection, which keepalives end a minute after the target
+stops answering.  If it ends while populate runs, e.g. killed on the
+target, populate fails before its next command on the target, so a run that
+wasn't locked throughout doesn't get recorded.
+
 Until a run finishes, populate keeps a journal in `.populate/journal` of
 what it began changing, and what that changed, which the next run that
 finishes sums up in its record.  A `file` or `git` source whose lock file

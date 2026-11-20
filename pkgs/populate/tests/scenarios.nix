@@ -884,6 +884,41 @@ in
         }
       ];
     })
+    # The command holding the lock ending, here when a pipe source kills
+    # it, or what runs it on the deploying machine, fails the run before the
+    # next command on the target, without a record.  On a remote target,
+    # that's the ssh client running it, and on the local one the command
+    # itself, cat by then, holding the lock file open.
+    (s "lock-lost" {
+      prepareDeployer = ''
+        cat > /tmp/lose-lock <<'EOF'
+        #!/bin/sh
+        pkill -f 'exec cat >/dev/null' || :
+        for fd in /proc/[0-9]*/fd/*; do
+          case $(readlink "$fd" 2>/dev/null) in
+            */.populate/lock)
+              pid=''${fd#/proc/}
+              kill "''${pid%%/*}" || :
+              ;;
+          esac
+        done
+        sleep 1
+        echo x
+        EOF
+        chmod +x /tmp/lose-lock
+      '';
+      phases = [{
+        sources = {
+          a.pipe = "/tmp/lose-lock";
+          b.symlink = "a";
+        };
+        expect.fail = "error: populate lost the lock on";
+        check = ''
+          test ! -e "$T"/.populate/run.json || fail "record written"
+          test -e "$T"/.populate/journal || fail "journal missing"
+        '';
+      }];
+    })
     # A materialized input is a writable copy, patched and with a rewritten
     # lock file, which gets made again only when what it derives from
     # changes, and becomes a link again when not materialized anymore.

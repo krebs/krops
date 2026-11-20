@@ -25,7 +25,7 @@ pub fn populate(context: &Context, spec: &Spec) -> Result<()> {
         &[&sentinel, &context.name(&sentinel), dir, force],
     )?;
     let started = record::now();
-    let (lock, previous) = context.lock(&sentinel, json!({ "run": started }))?;
+    let previous = context.lock(&sentinel, json!({ "run": started }))?;
     if spec.backup {
         context.run(&sh::backup(), &[dir])?;
     }
@@ -73,7 +73,7 @@ pub fn populate(context: &Context, spec: &Spec) -> Result<()> {
     }
     let record = record::record(spec, &started, &previous, &context.entries());
     context.run(sh::RECORD, &[&sentinel, &record.to_string()])?;
-    drop(lock);
+    context.unlock();
     Ok(())
 }
 
@@ -292,7 +292,7 @@ impl Kind for Git {
         ];
         args.extend(excludes);
         // With standard input, which Git may ask for credentials on.
-        let mut command = d.context.shell(&sh::git(), &args);
+        let mut command = d.context.shell(&sh::git(), &args)?;
         command.stdin(Stdio::inherit());
         let output = run::output(&mut command)?;
         let mut outcome = Outcome::default();

@@ -116,20 +116,9 @@ pub struct Context {
     /// This run's entries of the journal, and how many of them are in the
     /// journal on the target already.
     entries: std::cell::RefCell<(Vec<serde_json::Value>, usize)>,
-}
-
-/// The lock on the target directory, which the command holding it keeps
-/// until populate drops this, or ends.
-pub struct Lock {
-    child: Child,
-}
-
-impl Drop for Lock {
-    fn drop(&mut self) {
-        // Its input ending ends the command, which releases the lock.
-        drop(self.child.stdin.take());
-        let _ = self.child.wait();
-    }
+    /// The command holding the lock on the target directory, see lock, and
+    /// the lock file's name in messages.
+    lock: std::cell::RefCell<Option<(Child, String)>>,
 }
 
 impl Context {
@@ -158,6 +147,7 @@ impl Context {
             git_checked: Default::default(),
             journal: Default::default(),
             entries: Default::default(),
+            lock: Default::default(),
         };
         context.write_ssh(&context.ssh, &context.ssh_options(true))?;
         context.write_ssh(&context.ssh_nix, &context.ssh_options(false))?;
@@ -192,7 +182,17 @@ impl Context {
         }
         if shared {
             let control_path = format!("ControlPath={}/ssh-%r@%h:%p.sock", self.tmpdir.display());
-            for option in ["ControlMaster=auto", &control_path, "ControlPersist=1h"] {
+            // The keepalives end the connection, and with it the command
+            // holding the lock on the target, about a minute after the
+            // target stops answering, e.g. when the network fails, instead
+            // of after TCP gives up, which may take hours.
+            for option in [
+                "ControlMaster=auto",
+                &control_path,
+                "ControlPersist=1h",
+                "ServerAliveInterval=15",
+                "ServerAliveCountMax=4",
+            ] {
                 options.extend(["-o".to_string(), option.to_string()]);
             }
             options.push("-T".to_string());
@@ -231,8 +231,10 @@ impl Context {
     /// its positional parameters.  Over ssh, the remote shell gets it as
     /// one quoted command, run via sudo if the target says so.
     /// The entries of the journal not in the journal on the target yet get
-    /// there first, so they precede what the command changes.
-    pub fn shell(&self, script: &str, args: &[&str]) -> Command {
+    /// there first, so they precede what the command changes.  Fails if
+    /// populate lost the lock on the target directory, see check_lock.
+    pub fn shell(&self, script: &str, args: &[&str]) -> Result<Command> {
+        self.check_lock()?;
         let mut lines = Vec::new();
         if let Some(journal) = &*self.journal.borrow() {
             let (entries, flushed) = &mut *self.entries.borrow_mut();
@@ -257,7 +259,7 @@ impl Context {
         if self.local {
             let mut command = Command::new("sh");
             command.arg("-c").arg(script).arg("sh").args(args);
-            command
+            Ok(command)
         } else {
             let mut words = vec![
                 if self.target.sudo {
@@ -272,26 +274,25 @@ impl Context {
             words.extend(args.iter().map(|arg| quote(arg)));
             let mut command = Command::new(&self.ssh);
             command.arg(&self.target.host).arg(words.join(" "));
-            command
+            Ok(command)
         }
     }
 
     /// Takes the lock on the target directory, whose sentinel is sentinel,
-    /// adding entry to the journal, which entries go to from now on.
-    /// Returns the lock, and the lines that runs that didn't finish left in
-    /// the journal.
-    pub fn lock(&self, sentinel: &str, entry: serde_json::Value) -> Result<(Lock, Vec<String>)> {
+    /// adding entry to the journal, which entries go to from now on, until
+    /// unlock.  Returns the lines that runs that didn't finish left in the
+    /// journal.
+    pub fn lock(&self, sentinel: &str, entry: serde_json::Value) -> Result<Vec<String>> {
         let mut command = self.shell(
             crate::sh::LOCK,
             &[sentinel, &self.name(sentinel), &entry.to_string()],
-        );
+        )?;
         command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit());
         let mut child = command.spawn().map_err(|e| spawn_error(&command, e))?;
         let stdout = child.stdout.take().expect("piped");
-        let mut lock = Lock { child };
         let mut previous = Vec::new();
         let mut locked = false;
         for line in BufReader::new(stdout).lines() {
@@ -306,20 +307,45 @@ impl Context {
             }
             previous.push(line);
         }
-        check_signal()?;
         if !locked {
-            drop(lock.child.stdin.take());
-            let status = lock.child.wait().map_err(|e| spawn_error(&command, e))?;
+            drop(child.stdin.take());
+            let status = child.wait().map_err(|e| spawn_error(&command, e))?;
+            check_signal()?;
             return Err(if status.success() {
                 Failure::Message("error: can't take the lock on the target directory".to_string())
             } else {
                 failed(status)
             });
         }
+        *self.lock.borrow_mut() = Some((child, self.name(&format!("{sentinel}/lock"))));
+        check_signal()?;
         *self.journal.borrow_mut() = Some(format!("{sentinel}/journal"));
         self.entries.borrow_mut().0.push(entry);
         self.entries.borrow_mut().1 = 1;
-        Ok((lock, previous))
+        Ok(previous)
+    }
+
+    /// Fails if the command holding the lock ended, e.g. killed on the
+    /// target, or with the ssh connection, which releases the lock, so a
+    /// run that isn't locked throughout doesn't get recorded.
+    pub fn check_lock(&self) -> Result<()> {
+        if let Some((child, name)) = &mut *self.lock.borrow_mut() {
+            if !matches!(child.try_wait(), Ok(None)) {
+                return Err(Failure::Message(format!(
+                    "error: populate lost the lock on {name}"
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    /// Releases the lock: the input of the command holding it ending ends
+    /// the command.
+    pub fn unlock(&self) {
+        if let Some((mut child, _)) = self.lock.borrow_mut().take() {
+            drop(child.stdin.take());
+            let _ = child.wait();
+        }
     }
 
     /// Adds entry to the journal, see the record module.
@@ -337,7 +363,7 @@ impl Context {
     /// Runs shell code on the target, with its output going where
     /// populate's errors go.
     pub fn run(&self, script: &str, args: &[&str]) -> Result<()> {
-        let mut command = self.shell(script, args);
+        let mut command = self.shell(script, args)?;
         command.stdout(stderr());
         status(&mut command)
     }
@@ -375,12 +401,13 @@ impl Context {
 
     /// Runs shell code on the target, returning its output.
     pub fn output(&self, script: &str, args: &[&str]) -> Result<String> {
-        output(&mut self.shell(script, args))
+        output(&mut self.shell(script, args)?)
     }
 
-    /// Stops the ssh master, if any command started one, and removes the
-    /// temporary directory.
+    /// Releases the lock, stops the ssh master, if any command started one,
+    /// and removes the temporary directory.
     pub fn clean_up(&self) {
+        self.unlock();
         if !self.local {
             let check = Command::new(&self.ssh)
                 .args(["-q", "-O", "check", &self.target.host])
