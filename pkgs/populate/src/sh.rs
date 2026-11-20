@@ -154,7 +154,8 @@ fi
 
 /// lock SENTINEL NAME ENTRY: waits for an exclusive lock on SENTINEL/lock,
 /// prints what's in SENTINEL/journal, which is there if a run didn't
-/// finish, appends ENTRY to it, and prints locked.  Then it keeps the lock
+/// finish, appends ENTRY to it, prints record and what's in
+/// SENTINEL/run.json, the last run's record, if any, and prints locked.  Then it keeps the lock
 /// until its standard input ends, which consumers of the target directory
 /// can wait for by taking a shared lock.  NAME is the sentinel's name in
 /// messages.  Writing to a symlink in place of the lock or the journal
@@ -177,6 +178,10 @@ if test -f "$sentinel"/journal; then
   cat "$sentinel"/journal
 fi
 printf '%s\n' "$entry" >> "$sentinel"/journal
+echo record
+if test -f "$sentinel"/run.json; then
+  cat "$sentinel"/run.json
+fi
 echo locked
 exec cat >/dev/null
 "#;
@@ -191,6 +196,14 @@ printf '%s\n' "$record" > "$tmp"
 chmod 644 "$tmp"
 mv -f "$tmp" "$sentinel"/run.json
 rm -f "$sentinel"/journal
+"#;
+
+/// digests PATH...: prints the hash of what's at each PATH, as Nix hashes
+/// store paths, in SRI format, on lines of their own.
+pub const DIGESTS: &str = r#"
+for path; do
+  nix-hash --type sha256 --sri "$path"
+done
 "#;
 
 /// The shell code adding the lines a command gets before its own arguments

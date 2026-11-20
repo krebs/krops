@@ -133,6 +133,23 @@
           default = false;
           type = lib.types.bool;
         };
+        # What the run record tells about what got delivered, besides
+        # whether it changed, see populate's README.
+        record = lib.mkOption {
+          default = null;
+          type = lib.types.nullOr (lib.types.submodule {
+            options = {
+              commit = lib.mkOption {
+                default = false;
+                type = lib.types.bool;
+              };
+              digest = lib.mkOption {
+                default = false;
+                type = lib.types.bool;
+              };
+            };
+          });
+        };
         exclude = lib.mkOption {
           apply = x:
             if x != [] then

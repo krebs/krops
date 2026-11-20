@@ -870,6 +870,55 @@ in
         }
       ];
     }))
+    # A file source's record setting: the commit of the Git work tree, and
+    # whether it's dirty, on every run, and the digest, computed when the
+    # source changed, and else taken from the last record.
+    (s "record-file" (let
+      sources.x.file = {
+        path = "/tmp/record-file";
+        record = { commit = true; digest = true; };
+      };
+      digest = ''
+        expect_eq digest "$(record sources.x.digest)" \
+            "\"$(nix-hash --type sha256 --sri "$T"/x)\""
+      '';
+    in {
+      prepareDeployer = ''
+        rm -fR /tmp/record-file
+        git init -q /tmp/record-file
+        echo a > /tmp/record-file/a
+        git -C /tmp/record-file add a
+        git -C /tmp/record-file -c user.name=krops -c user.email=spam@krebsco.de \
+            commit -q -m a
+      '';
+      phases = [
+        {
+          inherit sources;
+          check = digest + ''
+            expect_eq dirty "$(record sources.x.dirty)" false
+            record sources.x.commit > "$T".commit
+            grep -Eqx '"[0-9a-f]{40}"' "$T".commit || fail "no commit"
+          '';
+        }
+        {
+          inherit sources;
+          check = digest + ''
+            expect_eq changed "$(record sources.x.changed)" false
+          '';
+          mutateDeployer = ''
+            echo b > /tmp/record-file/b
+          '';
+        }
+        {
+          inherit sources;
+          check = digest + ''
+            expect_eq changed "$(record sources.x.changed)" true
+            expect_eq dirty "$(record sources.x.dirty)" true
+            expect_eq commit "$(record sources.x.commit)" "$(cat "$T".commit)"
+          '';
+        }
+      ];
+    }))
     # A consumer of the target directory holding a shared lock delays the
     # next run.
     (s "lock" {

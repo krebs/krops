@@ -51,6 +51,8 @@ enum Kind {
     Clean,
     /// file's filters, each with type include or exclude, and a pattern.
     Filters,
+    /// file's record, with commit and digest, flags.
+    Record,
     /// Inputs drawn from other sources, each with follows, a string, and
     /// inputs, again inputs.
     Inputs,
@@ -71,6 +73,7 @@ fn known_settings(kind: &str) -> &'static [(&'static str, Kind, bool)] {
             ("insecureLinks", Bool, false),
             ("inputs", Inputs, false),
             ("rewriteLock", Bool, false),
+            ("record", Record, false),
         ],
         "flake" => &[
             ("url", String, true),
@@ -129,6 +132,9 @@ fn is_kind(value: &Value, kind: Kind) -> bool {
         Kind::Clean => value
             .as_object()
             .is_some_and(|o| only(o, &["exclude"]) && o.get("exclude").map_or(true, strings)),
+        Kind::Record => value
+            .as_object()
+            .is_some_and(|o| only(o, &["commit", "digest"]) && o.values().all(Value::is_boolean)),
         Kind::Filters => value.as_array().is_some_and(|a| {
             a.iter().all(|f| {
                 f.as_object().is_some_and(|o| {

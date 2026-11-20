@@ -359,7 +359,7 @@ pub fn deliver(
         args.extend(paths.iter().map(String::as_str));
         let output = context.output(&on_target(sh::flake::LINK, None), &args)?;
         let changed = !derived && output.contains("changed");
-        Ok(Outcome::changed(changed).with("storePath", &paths[0]))
+        Ok(Outcome::changed(changed).with("storePath", paths[0].as_str()))
     };
     let on_target_output = |what: &'static str| {
         move |snippet: &str, args: &[&str]| context.output(&on_target(snippet, Some(what)), args)
