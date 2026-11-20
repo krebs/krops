@@ -6,7 +6,7 @@
 /// for each source that needs one.  Besides, there is backup, which holds
 /// copies of the sources, and the files lock, journal, and run.json, see
 /// LOCK and RECORD.
-pub const STATE_KINDS: &str = "derived flake-inputs flake-uploads flakes patches";
+pub const STATE_KINDS: &str = "derived flake-inputs flake-uploads flakes locks patches";
 
 /// Defines use_state SENTINEL NAME..., which prepares keeping state below
 /// the sentinel for the sources named NAME.  Populate changes and removes
@@ -388,11 +388,12 @@ git_problems() (
 )
 "#;
 
-/// git PATH NAME URL REF SHALLOW FETCH_ALWAYS RECLONE EXCLUDE...: makes
-/// PATH a Git work tree of the repository at URL, with REF checked out,
-/// and everything removed that Git doesn't track, except what matches an
-/// EXCLUDE pattern.  SHALLOW, FETCH_ALWAYS, and RECLONE are flags, empty
-/// for false.  NAME is PATH's name in messages.  Prints checked if
+/// git PATH NAME URL REF SHALLOW FETCH_ALWAYS RECLONE LOCK EXCLUDE...:
+/// makes PATH a Git work tree of the repository at URL, with REF checked
+/// out, and everything removed that Git doesn't track, except what matches
+/// an EXCLUDE pattern.  SHALLOW, FETCH_ALWAYS, and RECLONE are flags, empty
+/// for false.  LOCK, if not empty, is the path of a lock file the flakes
+/// step rewrites in place, so bringing it back doesn't count as a change.  NAME is PATH's name in messages.  Prints checked if
 /// git_problems found nothing wrong with the work tree that was there,
 /// which then is what's there, changed if anything changed, and commit and
 /// the commit checked out, on lines of their own; what commands print goes
@@ -409,7 +410,13 @@ pub fn git() -> String {
 checked= changed=
 deliver_git() {
   path=$1 name=$2 url=$3 ref=$4 shallow=$5 fetch_always=$6 reclone=$7
-  shift 7
+  lock=$8
+  shift 8
+  # Whether lines of what Git prints name anything but LOCK, after the
+  # first $1 characters.
+  names_others() {
+    test -n "$(printf '%s\n' "$2" | cut -c"$(($1 + 1))"- | grep -vxF -e "$lock" -e '')"
+  }
   # Hooks and commands a repository's configuration names run with Git's
   # commands, so populate's Git doesn't run any.  The configuration gets
   # checked as well, but Git also runs a hook it has itself.
@@ -500,8 +507,13 @@ deliver_git() {
   commit=$(git rev-parse --verify --quiet "$hash^{commit}") || commit=
   changes=$(git status --porcelain --untracked-files=no) || changes=unknown
   if test -z "$head" || test "$head" != "$commit" || test -n "$changes"; then
-    changed=1
-    git reset --hard "$hash"
+    if test "$head" != "$commit" || names_others 3 "$changes"; then
+      changed=1
+      git reset --hard "$hash"
+    else
+      # Only bringing back LOCK, which is nothing to tell.
+      git reset --quiet --hard "$hash"
+    fi
   fi
   log=$(mktemp)
   git submodule update --init --recursive > "$log"
@@ -517,7 +529,9 @@ deliver_git() {
   done
   git clean -dfx "$@" > "$log"
   if test -s "$log"; then
-    changed=1
+    if names_others 9 "$(cat "$log")"; then
+      changed=1
+    fi
     cat "$log"
   fi
   rm "$log"
@@ -1041,17 +1055,37 @@ fi
 rm -R "$empty"
 "#;
 
-    /// lock DIR URL ARG...: rewrites the lock file of the flake in DIR,
-    /// at URL, with nix flake lock's arguments ARG, printing changed if
-    /// that changed it.
+    /// lock DIR URL KEPT ARG...: rewrites the lock file of the flake in
+    /// DIR, at URL, with nix flake lock's arguments ARG.  If it differs
+    /// from the one rewritten before, it prints changed, after what Nix
+    /// says about it.  That's in KEPT, if not empty, which gets a copy:
+    /// delivering a file or git source brings back the original lock file
+    /// on every run.  Else it's the lock file there, as for a materialized
+    /// copy.
     pub const LOCK: &str = r#"
-dir=$1 url=$2
-shift 2
+dir=$1 url=$2 kept=$3
+shift 3
 own_lock "$dir"
-old=$(cat "$dir"/flake.lock 2>/dev/null) || old=
-nix flake lock "$@" "$url" >&2
-if test "$(cat "$dir"/flake.lock)" != "$old"; then
+if test -n "$kept"; then
+  old=$(cat "$kept" 2>/dev/null) || old=
+else
+  old=$(cat "$dir"/flake.lock 2>/dev/null) || old=
+fi
+log=$(mktemp)
+if ! nix flake lock "$@" "$url" >&2 2>"$log"; then
+  cat "$log" >&2
+  rm "$log"
+  exit 1
+fi
+new=$(cat "$dir"/flake.lock)
+if test "$new" != "$old"; then
+  cat "$log" >&2
   echo changed
+fi
+rm "$log"
+if test -n "$kept"; then
+  mkdir -p "$(dirname "$kept")"
+  write_key "$kept" "$new"
 fi
 "#;
 
@@ -1209,12 +1243,13 @@ fi
 rm "$log"
 "#;
 
-    /// clean_up SENTINEL NAMES NOT_FLAKES GENERATED DERIVED PATCHED: removes
-    /// the state sources don't need anymore.  Each argument after SENTINEL
-    /// is a list of source names, separated by blanks: of all sources, of
-    /// those that are neither flake nor flake-input sources, whose roots
-    /// for the garbage collector go, and of those that have a generated
-    /// flake, derived state, and patches.
+    /// clean_up SENTINEL NAMES NOT_FLAKES GENERATED DERIVED PATCHED LOCKS:
+    /// removes the state sources don't need anymore.  Each argument after
+    /// SENTINEL is a list of source names, separated by blanks: of all
+    /// sources, of those that are neither flake nor flake-input sources,
+    /// whose roots for the garbage collector go, and of those that have a
+    /// generated flake, derived state, patches, and a copy of the lock file
+    /// rewritten in place.
     pub const CLEAN_UP: &str = r#"
 sentinel=$1
 # The names are portable file names, so splitting them at blanks is fine.
@@ -1244,5 +1279,7 @@ remove_stale "$sentinel"/flakes $4
 remove_stale "$sentinel"/derived $5
 # shellcheck disable=SC2086
 remove_stale "$sentinel"/patches $6
+# shellcheck disable=SC2086
+remove_stale "$sentinel"/locks $7
 "#;
 }

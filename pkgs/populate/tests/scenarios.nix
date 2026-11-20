@@ -546,11 +546,13 @@ in
       };
     }))
     # The lock file gets rewritten or generated again when a source inputs
-    # get drawn from changes.  What Nix prints about a generated flake's lock
-    # file only gets printed then.
+    # get drawn from changes.  What Nix prints about the lock file only gets
+    # printed then, and the record only says x changed then, also when
+    # delivering x brings back the lock file that gets rewritten in place.
     (modes "relock" ({ draw, flake, mode, ... }: let
       x.file = { path = "/fixtures/filesrc"; } // draw { dep.follows = "a"; };
-      generated = optional (mode == "generated");
+      # Nix updates the lock file of x, or creates it, if x has none.
+      message = if mode == "generated" then "creating lock file" else "lock file";
     in {
       phases = [
         {
@@ -558,20 +560,22 @@ in
           check = ''
             expect_eq msg "$(nix_eval_online ${flake "x"}#msg)" top:alt,sub
           '';
-          output = generated "creating lock file";
+          output = [ message ];
         }
         {
           sources = { inherit x; a.file = "/fixtures/alt"; };
           check = ''
             expect_eq msg "$(nix_eval_online ${flake "x"}#msg)" top:alt,sub
+            expect_eq changed "$(record changed)" false
           '';
-          unexpected = generated "lock file";
+          unexpected = [ "lock file" ];
         }
         {
-          output = generated "creating lock file";
+          output = [ message ];
           sources = { inherit x; a.file = "/fixtures/alt2"; };
           check = ''
             expect_eq msg "$(nix_eval_online ${flake "x"}#msg)" top:alt2,sub
+            expect_eq "x changed" "$(record sources.x.changed)" true
           '';
         }
       ];

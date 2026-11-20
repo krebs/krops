@@ -264,9 +264,7 @@ wasn't locked throughout doesn't get recorded.
 
 Until a run finishes, populate keeps a journal in `.populate/journal` of
 what it began changing, and what that changed, which the next run that
-finishes sums up in its record.  A `file` or `git` source whose lock file
-populate rewrites in place gets its original lock file back, and rewritten
-again, on every run, so it counts as changed every time.
+finishes sums up in its record.
 
 
 ## Source Types
@@ -623,7 +621,11 @@ much like `NIX_PATH` does for Nix expressions.
 Populate rewrites the lock file of the flake in each source that draws
 inputs from other sources, using `nix flake lock --override-input`, so the
 flake in the source itself uses the other sources.  `file` and `git` sources
-get their lock file rewritten in place.  `flake` and `flake-input` sources
+get their lock file rewritten in place.  Delivering them brings back the
+original lock file on every run, so populate keeps a copy of the rewritten
+one in `.populate/locks/<name>`, and only prints what Nix says about the
+lock file, and records a change, if it differs from that.  `flake` and
+`flake-input` sources
 get delivered as a copy with the rewritten lock file, which gets added to the
 store, unless materialized, so the target path links to that instead of the
 delivered store path, as it does for patched ones.  A source drawing an input

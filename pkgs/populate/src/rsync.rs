@@ -84,8 +84,14 @@ impl Config {
 }
 
 /// Transfers source_path, a directory's contents or a file, to path on the
-/// target, returning whether that changed anything there.
-pub fn transfer(context: &Context, config: &Config, source_path: &str, path: &str) -> Result<bool> {
+/// target, returning the paths, relative to path, of what that changed
+/// there.
+pub fn transfer(
+    context: &Context,
+    config: &Config,
+    source_path: &str,
+    path: &str,
+) -> Result<Vec<String>> {
     context.run(&sh::break_hard_links(), &[path, &context.name(path)])?;
     let mut source = source_path.to_string();
     if Path::new(source_path).is_dir() {
@@ -124,23 +130,33 @@ pub fn transfer(context: &Context, config: &Config, source_path: &str, path: &st
         command.arg("--delete-excluded");
     }
     command.arg(&source).arg(context.rsync_destination(path));
-    let mut changed = false;
+    let mut changed = Vec::new();
     run::lines(&mut command, |line| {
-        changed |= itemizes_change(line);
+        changed.extend(changed_path(line));
         eprintln!("{line}");
     })?;
     Ok(changed)
 }
 
-/// Whether a line rsync prints itemizes a change: what --itemize-changes
-/// prints for an item, eleven characters, the second the type of the item,
-/// or *deleting, followed by a blank.
-fn itemizes_change(line: &str) -> bool {
-    let Some((item, _)) = line.split_once(' ') else {
-        return false;
+/// The path of what a line rsync prints itemizes a change of: what
+/// --itemize-changes prints for an item, eleven characters, the second the
+/// type of the item, or *deleting, followed by a blank, and the path, which
+/// the sizes follow for items, and a symlink's target, after ->.
+fn changed_path(line: &str) -> Option<String> {
+    let (item, rest) = line.split_once(' ')?;
+    if item == "*deleting" {
+        return Some(rest.trim_start().to_string());
+    }
+    if item.len() != 11 || !matches!(item.as_bytes()[1], b'f' | b'd' | b'L' | b'D' | b'S') {
+        return None;
+    }
+    let (path, _sizes) = rest.rsplit_once(' ')?;
+    let path = if item.as_bytes()[1] == b'L' {
+        path.split_once(" -> ").map_or(path, |(path, _)| path)
+    } else {
+        path
     };
-    item == "*deleting"
-        || item.len() == 11 && matches!(item.as_bytes()[1], b'f' | b'd' | b'L' | b'D' | b'S')
+    Some(path.to_string())
 }
 
 /// rsync 3.5.0 and later open .rsync-filter files with a stricter walk than
@@ -315,13 +331,18 @@ mod tests {
     use super::*;
 
     #[test]
-    fn itemized_changes() {
-        assert!(itemizes_change(">f.st...... flake.nix 82/39"));
-        assert!(itemizes_change("cd+++++++++ .git/objects/25/ 0/4.00K"));
-        assert!(itemizes_change(".f..t...... x 0/1"));
-        assert!(itemizes_change("*deleting   old"));
-        assert!(!itemizes_change("skipping non-regular file \"x\""));
-        assert!(!itemizes_change("sent 10 bytes"));
+    fn changed_paths() {
+        let path = |line| changed_path(line);
+        assert_eq!(
+            path(">f.st...... flake.nix 82/39").as_deref(),
+            Some("flake.nix")
+        );
+        assert_eq!(path("cd+++++++++ a b/ 0/4.00K").as_deref(), Some("a b/"));
+        assert_eq!(path(".f..t...... x 0/1").as_deref(), Some("x"));
+        assert_eq!(path("cL+++++++++ l -> t 0/0").as_deref(), Some("l"));
+        assert_eq!(path("*deleting   old").as_deref(), Some("old"));
+        assert_eq!(path("skipping non-regular file \"x\""), None);
+        assert_eq!(path("sent 10 bytes"), None);
     }
 
     #[test]

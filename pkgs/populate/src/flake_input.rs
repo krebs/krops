@@ -595,7 +595,7 @@ fn upload_patches(
         &dir.to_string_lossy(),
         &format!("{sentinel}/patches/{name}"),
     )
-    .map(|_| ())
+    .map(drop)
 }
 
 /// Uploads the flake itself to a target that can't fetch it, unless the
@@ -615,7 +615,7 @@ fn upload_self(context: &Context, name: &str, sentinel: &str, self_path: &str) -
         .join("flake-uploads")
         .join(name)
         .join("tree");
-    rsync::transfer(context, &config, self_path, &upload.to_string_lossy()).map(|_| ())
+    rsync::transfer(context, &config, self_path, &upload.to_string_lossy()).map(drop)
 }
 
 #[cfg(test)]

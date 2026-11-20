@@ -135,7 +135,7 @@ impl Delivery<'_> {
             &source_path.to_string_lossy(),
             self.path,
         )?;
-        Ok(Outcome::changed(changed))
+        Ok(Outcome::changed(!changed.is_empty()))
     }
 }
 
@@ -188,6 +188,12 @@ fn string<'a>(settings: &'a Map<String, Value>, key: &str) -> Result<&'a str> {
         .ok_or_else(|| Failure::Message(format!("populate: the source has no {key}")))
 }
 
+/// The path, relative to the source, of the lock file of the flake in a
+/// source, if the flakes step rewrites it in place, see flake::rewrite.
+fn in_place_lock(source: &Source) -> Option<&'static str> {
+    flake::rewrites_lock(source).then_some("flake.lock")
+}
+
 /// A Nix expression, built on the target, delivered as a link to the result.
 struct Derivation;
 
@@ -221,7 +227,12 @@ impl Kind for File {
             ..Config::from_settings(settings)
         };
         let changed = rsync::transfer(d.context, &config, source_path, d.path)?;
-        Ok(Outcome::changed(changed))
+        // The lock file the flakes step rewrites, which delivering brings
+        // back, changed if the flakes step says so.
+        let lock = in_place_lock(d.source);
+        Ok(Outcome::changed(
+            changed.iter().any(|path| Some(path.as_str()) != lock),
+        ))
     }
 }
 
@@ -250,7 +261,7 @@ impl Kind for Pipe {
             ..Config::default()
         };
         let changed = rsync::transfer(d.context, &config, &out.to_string_lossy(), d.path)?;
-        Ok(Outcome::changed(changed))
+        Ok(Outcome::changed(!changed.is_empty()))
     }
 }
 
@@ -289,6 +300,7 @@ impl Kind for Git {
             flag("shallow"),
             flag("fetchAlways"),
             flag("reclone"),
+            in_place_lock(d.source).unwrap_or_default(),
         ];
         args.extend(excludes);
         // With standard input, which Git may ask for credentials on.

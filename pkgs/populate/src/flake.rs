@@ -43,6 +43,12 @@ pub fn has_generated_flake(source: &Source) -> bool {
         && (source.kind == "symlink" || !bool_setting(&source.settings, "rewriteLock", true))
 }
 
+/// Whether the flakes step rewrites the lock file of the flake in a source
+/// in place, which is how a file or git source draws inputs.
+pub fn rewrites_lock(source: &Source) -> bool {
+    !source.follows().is_empty() && !has_generated_flake(source) && !derives_flake(source)
+}
+
 /// Whether a flake or flake-input source gets delivered as a copy, which
 /// gets patched, gets its lock file rewritten, or is materialized.
 pub fn derives_flake(source: &Source) -> bool {
@@ -543,7 +549,8 @@ impl<'a> Flakes<'a> {
         let args = self.override_args(name)?;
         let resolved = self.resolve(&[self.path(name)], false)?;
         let url = Self::flake_url(name, &resolved[0])?;
-        let mut all = vec![resolved[0].path.as_str(), url.as_str()];
+        let kept = self.state("locks", name);
+        let mut all = vec![resolved[0].path.as_str(), url.as_str(), kept.as_str()];
         all.extend(args.iter().map(String::as_str));
         self.changed(sh::draw::LOCK, true, &all)
     }
@@ -649,7 +656,7 @@ impl<'a> Flakes<'a> {
             }
             if rewrite_lock {
                 let url = self.own_url(name)?;
-                let mut all = vec![target_path.as_str(), url.as_str()];
+                let mut all = vec![target_path.as_str(), url.as_str(), ""];
                 all.extend(args.iter().map(String::as_str));
                 outcome.changed |= self.changed(sh::draw::LOCK, true, &all)?.changed;
             }
@@ -743,6 +750,13 @@ impl<'a> Flakes<'a> {
                 .filter(|(_, s)| !patches(&s.settings).is_empty())
                 .map(|(n, _)| n.as_str()),
         );
+        let locks = list(
+            &mut self
+                .sources
+                .iter()
+                .filter(|(_, s)| rewrites_lock(s))
+                .map(|(n, _)| n.as_str()),
+        );
         self.run(
             sh::draw::CLEAN_UP,
             false,
@@ -753,6 +767,7 @@ impl<'a> Flakes<'a> {
                 &generated,
                 &derived,
                 &patched,
+                &locks,
             ],
         )
     }
