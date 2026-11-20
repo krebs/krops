@@ -28,10 +28,12 @@ fetches the program's dependencies from [crates.io](https://crates.io).
 populate runs rsync, ssh, Git, Nix, pass, and passage as the sources need
 them, found in `PATH`, as well as coreutils and findutils, and a POSIX shell
 as `/bin/sh`.
-The target needs a POSIX shell as `/bin/sh`, coreutils, findutils, `flock`, rsync,
-`patch` for sources with `patches`, Git for `git` sources, and Nix, and, if
+The target needs a POSIX shell as `/bin/sh`, coreutils, Nix, and, if
 remote, ssh access as root, or, with `--sudo`, as a user who may use
-`sudo`.
+`sudo`.  populate also runs findutils, `flock`, rsync, `patch` for sources
+with `patches`, and Git for `git` sources there.  If the target lacks any
+of those, populate warns, and gets them from `<nixpkgs>` there with
+`nix-build`, once for each run.
 NixOS has all of them but Git, and rsync as long as
 `environment.defaultPackages` contains it.  Features that say so need Nix
 with flake support (Nix 2.4 or later) on the machine that uses them.

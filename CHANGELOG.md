@@ -16,6 +16,10 @@
   commit of the Git work tree it's in, whether that's dirty, and a hash
   of what got delivered.  The sentinel is a directory, which a sentinel
   file becomes, and the target needs `flock`.
+- Populate runs shell code with `/bin/sh`.  If the target lacks commands
+  populate runs there, `flock`, rsync, `patch`, Git, or findutils, populate
+  warns, and gets them from the target's `<nixpkgs>` with `nix-build`.
+  `pkgs.populate` puts util-linux and gnupatch in `PATH` as well.
 - `lib/with.nix` is krops' lib without nixpkgs' lib, which it takes from
   its caller, e.g. a flake's `nixpkgs.lib`.  `pkgs.krops`, `pkgs.populate`
   and krops' flake use the nixpkgs lib they get, instead of

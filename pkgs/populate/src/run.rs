@@ -123,6 +123,9 @@ pub struct Context {
     /// The command holding the lock on the target directory, see lock, and
     /// the lock file's name in messages.
     lock: std::cell::RefCell<Option<(Child, String)>>,
+    /// Directories on the target that commands there find commands in
+    /// before those in their PATH, see add_path.
+    path: std::cell::RefCell<Option<String>>,
 }
 
 impl Context {
@@ -151,6 +154,7 @@ impl Context {
             git_checked: Default::default(),
             journal: Default::default(),
             entries: Default::default(),
+            path: Default::default(),
             lock: Default::default(),
         };
         context.write_ssh(&context.ssh, &context.ssh_options(true))?;
@@ -249,10 +253,14 @@ impl Context {
                 *flushed = entries.len();
             }
         }
+        let path = match &*self.path.borrow() {
+            Some(path) => format!("PATH={path}:$PATH\nexport PATH\n"),
+            None => String::new(),
+        };
         let script = if lines.is_empty() {
-            format!("set -efu\n{script}")
+            format!("set -efu\n{path}{script}")
         } else {
-            format!("set -efu\n{}{script}", crate::sh::JOURNAL)
+            format!("set -efu\n{path}{}{script}", crate::sh::JOURNAL)
         };
         let args: Vec<&str> = lines
             .iter()
@@ -279,6 +287,29 @@ impl Context {
             command.arg(&self.target.host).arg(words.join(" "));
             Ok(command)
         }
+    }
+
+    /// Has commands on the target find commands in path, a list of
+    /// directories like PATH, before those in their PATH.  If the target
+    /// is the machine populate runs on, that goes for populate as well.
+    pub fn add_path(&self, path: &str) {
+        if self.local {
+            let old = std::env::var_os("PATH").unwrap_or_default();
+            let mut new = std::ffi::OsString::from(path);
+            if !old.is_empty() {
+                new.push(":");
+                new.push(old);
+            }
+            std::env::set_var("PATH", new);
+        } else {
+            *self.path.borrow_mut() = Some(path.to_string());
+        }
+    }
+
+    /// The directories add_path added for commands on the target, unless
+    /// the target is the machine populate runs on.
+    pub fn path(&self) -> Option<String> {
+        self.path.borrow().clone()
     }
 
     /// Takes the lock on the target directory, whose sentinel is sentinel,

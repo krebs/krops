@@ -106,9 +106,15 @@ pub fn transfer(
     if config.use_checksum {
         command.arg("--checksum");
     }
-    if context.target.sudo {
-        command.arg("--rsync-path=sudo rsync");
-    }
+    // The remote shell runs it as a command.
+    let sudo = if context.target.sudo { "sudo " } else { "" };
+    match context.path() {
+        Some(path) => command.arg(format!(
+            "--rsync-path={sudo}env PATH={path}:\"$PATH\" rsync"
+        )),
+        None if context.target.sudo => command.arg("--rsync-path=sudo rsync"),
+        None => &mut command,
+    };
     command.arg("-e").arg(&context.ssh).arg("--protect-args");
     if insecure_links {
         command.arg("--insecure-links");
