@@ -1,7 +1,8 @@
 # pkgs.populate: given populate's arguments, it checks them, and returns a
 # script running populate-unwrapped, the program in ../populate, with them,
 # the sources as JSON.
-{ coreutils, findutils, git, lib, nix, openssh, pass, passage, rsync, writers
+{ coreutils, findutils, git, gnupatch, lib, nix, openssh, pass, passage, rsync
+, util-linux, writers
 , populate-unwrapped
 , ...
 }@args:
@@ -14,8 +15,8 @@ let
   # set.  They come through ..., because callPackage would set named ones.
   unused = builtins.filter (name: args ? ${name}) [ "dash" "implementation" "jq" ];
   unexpected = builtins.attrNames (removeAttrs args ([
-    "coreutils" "findutils" "git" "lib" "nix" "openssh" "pass" "passage"
-    "rsync" "writers" "populate-unwrapped"
+    "coreutils" "findutils" "git" "gnupatch" "lib" "nix" "openssh" "pass"
+    "passage" "rsync" "util-linux" "writers" "populate-unwrapped"
   ] ++ unused));
 
   populate =
@@ -33,7 +34,8 @@ let
       set -efu
       echo + "$0" >&2
       PATH=${lib.makeBinPath [
-        coreutils findutils git nix openssh pass passage rsync
+        coreutils findutils git gnupatch nix openssh pass passage rsync
+        util-linux
       ]}''${PATH:+:$PATH}
       export PATH
       # The sources on a file descriptor of their own, so the commands
